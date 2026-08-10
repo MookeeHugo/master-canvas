@@ -15,6 +15,9 @@ const UNDO_LIMIT = 60;
 const els = {
   projectTitle: document.querySelector("#projectTitle"),
   canvasSelect: document.querySelector("#canvasSelect"),
+  loadDemoBtn: document.querySelector("#loadDemoBtn"),
+  openProjectBtn: document.querySelector("#openProjectBtn"),
+  projectOpenInput: document.querySelector("#projectOpenInput"),
   undoBtn: document.querySelector("#undoBtn"),
   newCanvasBtn: document.querySelector("#newCanvasBtn"),
   templatesBtn: document.querySelector("#templatesBtn"),
@@ -131,10 +134,74 @@ let assetFilters = {
   showArchived: false,
 };
 
+const STATUS_LABELS = {
+  draft: "草稿",
+  ready: "可执行",
+  review: "待审",
+  approved: "已通过",
+  blocked: "阻塞",
+  candidate: "候选",
+  winner: "最终版",
+  rejected: "废弃",
+  "needs revision": "需修改",
+};
+
+const NEED_LABELS = {
+  image: "图片",
+  video: "视频",
+  music: "音乐",
+  sound: "声音",
+  style: "风格",
+  text: "文案",
+  approval: "审批",
+};
+
+const MODULE_NAV_LABELS = {
+  script: "剧本",
+  character: "角色",
+  scene: "场景",
+  storyboard: "分镜",
+  schedule: "拍摄",
+  sound: "声音",
+  delivery: "交付",
+  general: "总控",
+};
+
+const NAVIGABLE_NODE_TYPES = new Set([
+  "section",
+  "note",
+  "scene",
+  "shot",
+  "workflow",
+  "imageWorkflow",
+  "character",
+  "placeholder",
+  "inspiration",
+  "styleRef",
+  "musicRef",
+  "media",
+]);
+
+function statusLabel(value = "draft") {
+  return STATUS_LABELS[value] || value || "草稿";
+}
+
+function needLabel(value = "") {
+  return NEED_LABELS[value] || value || "待补";
+}
+
+function safeFileName(value = "master-canvas-project") {
+  return String(value || "master-canvas-project")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 80) || "master-canvas-project";
+}
+
 function createDefaultProject() {
   return {
     id: uid("project"),
-    title: "Untitled pre-production board",
+    title: "未命名影视项目画布",
     createdAt: now(),
     updatedAt: now(),
     view: { x: 520, y: 230, scale: 0.9 },
@@ -161,36 +228,41 @@ function defaultContinuity() {
 function seedProject() {
   state.nodes = [
     makeNode("note", -420, -110, {
-      title: "Story spine",
-      notes: "Act beats, references, and decisions live on the board.",
+      title: "项目脊柱",
+      notes: "把剧本节拍、关键参考、导演决策和待交付节点集中到这张画布上。",
     }),
     makeNode("character", -80, -180, {
-      title: "Character ref",
-      notes: "Attach model sheets, wardrobe, face references, and continuity notes.",
-      tags: "character, continuity",
+      title: "角色参考",
+      notes: "记录角色脸部、服装、表演状态和连续性注意事项。",
+      tags: "角色, 连续性",
     }),
     makeNode("scene", -80, 80, {
-      title: "Scene ref",
-      notes: "Collect locations, palettes, lighting, lenses, and blocking references.",
-      tags: "scene, lookdev",
+      title: "场景参考",
+      notes: "收集地点、色彩、灯光、镜头和调度参考。",
+      tags: "场景, 视觉开发",
     }),
     makeNode("workflow", 340, -40, {
-      title: "Image to Video",
-      prompt: "Locked camera. Subject moves through frame with clean continuity.",
+      title: "图生视频工作流",
+      prompt: "固定机位，人物在画面中完成动作，保持角色与场景连续性。",
       status: "ready",
-      tags: "shot, motion",
+      tags: "镜头, 动态",
     }),
   ];
   setSelectedNodeIds([state.nodes[3].id]);
 }
 
 function makeNode(type, x, y, overrides = {}) {
+  const defaultWidth =
+    type === "section" ? 760 :
+    type === "workflow" || type === "imageWorkflow" || type === "shot" ? 330 :
+    type === "placeholder" || type === "character" || type === "scene" || type === "styleRef" || type === "musicRef" ? 300 :
+    290;
   const base = {
     id: uid("node"),
     type,
     x,
     y,
-    w: type === "section" ? 760 : type === "workflow" || type === "imageWorkflow" ? 320 : type === "placeholder" ? 300 : 270,
+    w: defaultWidth,
     h: type === "section" ? 440 : 180,
     title: nodeTypeLabel(type),
     notes: "",
@@ -248,20 +320,20 @@ function makeNode(type, x, y, overrides = {}) {
 
 function nodeTypeLabel(type) {
   const labels = {
-    workflow: "Image to Video",
-    imageWorkflow: "Generate Image",
-    shot: "Shot Card",
-    character: "Character Ref",
-    scene: "Scene Ref",
-    section: "Scene Section",
-    placeholder: "Placeholder",
-    inspiration: "Inspiration",
-    styleRef: "Style References",
-    musicRef: "Music References",
-    note: "Text Note",
-    media: "Media",
+    workflow: "图生视频",
+    imageWorkflow: "生图工作流",
+    shot: "镜头卡",
+    character: "角色卡",
+    scene: "场景卡",
+    section: "制作模块",
+    placeholder: "待补项",
+    inspiration: "灵感卡",
+    styleRef: "影像风格参考",
+    musicRef: "音乐 / 声音参考",
+    note: "文字备注",
+    media: "素材",
   };
-  return labels[type] || "Card";
+  return labels[type] || "卡片";
 }
 
 function isWorkflowNode(node) {
@@ -325,10 +397,13 @@ async function boot() {
   els.projectTitle.value = state.title;
   restorePanelLayout();
   wireEvents();
+  window.initI18n?.();
   setActiveTool(activeTool, false);
   restoreHelpPanelPosition();
   render();
-  toast("Local canvas ready");
+  const openedStartupFile = await wireDesktopOpenFileHandlers();
+  exposeSmokeState();
+  if (!openedStartupFile) toast("本地画布已就绪");
 }
 
 function readProjectsIndex() {
@@ -377,6 +452,7 @@ function loadProject(projectId) {
     loaded.continuity = { ...defaultContinuity(), ...(parsed.continuity || {}) };
     loaded.nodes = (loaded.nodes || []).map(normalizeNode);
     state = loaded;
+    allAssets = mergeAssets(parsed.assets || [], allAssets);
     state.assets = allAssets;
     localStorage.setItem(ACTIVE_PROJECT_KEY, state.id);
     return true;
@@ -450,7 +526,7 @@ async function importPackageFromManifest(manifestUrl) {
   if (!response.ok) throw new Error(`Could not load import manifest: ${manifestUrl}`);
   const manifest = await response.json();
   state = createDefaultProject();
-  state.title = manifest.title || "Imported pre-production board";
+  state.title = manifest.title || "导入的影视项目前期画布";
   state.view = manifest.view || { x: 140, y: 140, scale: 0.62 };
   state.assets = allAssets;
   state.nodes = [];
@@ -483,7 +559,7 @@ async function createAssetFromUrl(url, meta = {}) {
   const dataUrl = await blobToDataUrl(blob);
   return {
     id: uid("asset"),
-    name: meta.name || decodeURIComponent(url.split("/").pop() || "Imported asset"),
+    name: meta.name || decodeURIComponent(url.split("/").pop() || "导入素材"),
     type: blob.type.startsWith("video/") ? "video" : "image",
     mime: blob.type || "application/octet-stream",
     size: blob.size,
@@ -576,8 +652,8 @@ function layoutImportedPackage(manifest, importedByUrl) {
   }
 
   const summary = makeNode("note", 740, -760, {
-    title: "Package loaded",
-    notes: `Imported ${state.assets.length} assets from ${manifest.title}. Scene rows are laid out top to bottom. Each row includes media cards and a ready Image-to-Video workflow placeholder.`,
+    title: "素材包已导入",
+    notes: `已从 ${manifest.title} 导入 ${state.assets.length} 项素材。场景按从上到下排列，每行包含素材卡和可继续填写的图生视频工作流占位卡。`,
     tags: "import, guide",
     status: "ready",
     w: 310,
@@ -588,10 +664,13 @@ function layoutImportedPackage(manifest, importedByUrl) {
 }
 
 function saveProject(showToast = false) {
-  state.title = els.projectTitle.value.trim() || "Untitled pre-production board";
+  state.title = els.projectTitle.value.trim() || "未命名影视项目画布";
   state.updatedAt = now();
   persistProjectState();
-  if (showToast) toast("Saved locally");
+  if (showToast) {
+    toast("已保存到本机项目库");
+    void saveProjectFile();
+  }
 }
 
 function persistProjectState() {
@@ -606,7 +685,195 @@ function persistProjectState() {
 function serializeProject(project) {
   return {
     ...project,
-    assets: project.assets.map(({ dataUrl, ...asset }) => asset),
+    assets: (project.assets || []).map(({ dataUrl, ...asset }) => asset),
+  };
+}
+
+function mergeAssets(projectAssets = [], indexedAssets = allAssets) {
+  const merged = new Map();
+  indexedAssets.forEach((asset) => {
+    if (asset?.id) merged.set(asset.id, asset);
+  });
+  projectAssets.forEach((asset) => {
+    if (!asset?.id) return;
+    const backing = merged.get(asset.id) || {};
+    merged.set(asset.id, {
+      ...backing,
+      ...asset,
+      dataUrl: asset.dataUrl || backing.dataUrl || "",
+    });
+  });
+  return [...merged.values()];
+}
+
+async function saveProjectFile() {
+  const payload = JSON.stringify(exportProject(), null, 2);
+  const filename = `${safeFileName(state.title)}.mastercanvas`;
+  const bridge = window.TauriBridge;
+
+  if (bridge && (await bridge.init?.())) {
+    const outputPath = await bridge.showSaveDialog?.({
+      title: "保存 Master Canvas 项目",
+      defaultPath: filename,
+      filters: [
+        { name: "Master Canvas 项目", extensions: ["mastercanvas"] },
+        { name: "JSON 项目", extensions: ["json"] },
+      ],
+    });
+    if (!outputPath) return;
+    const savedPath = await bridge.writeTextFile?.(outputPath, payload);
+    toast(savedPath ? `项目文件已保存：${savedPath}` : "项目文件保存失败");
+    return;
+  }
+
+  downloadText(payload, filename, "application/json");
+  toast("项目文件已下载，可离线备份或转交给协作者");
+}
+
+async function openProjectFile() {
+  const bridge = window.TauriBridge;
+  if (bridge && (await bridge.init?.())) {
+    const selected = await bridge.showOpenDialog?.({
+      title: "打开 Master Canvas 项目",
+      multiple: false,
+      filters: [
+        { name: "Master Canvas 项目", extensions: ["mastercanvas", "mcproject", "json"] },
+      ],
+    });
+    const filePath = Array.isArray(selected) ? selected[0] : selected;
+    if (!filePath) return;
+    const content = await bridge.readTextFile?.(filePath);
+    if (!content) {
+      toast("无法读取项目文件");
+      return;
+    }
+    importProjectFromText(content, filePath);
+    return;
+  }
+
+  els.projectOpenInput?.click();
+}
+
+async function wireDesktopOpenFileHandlers() {
+  const bridge = window.TauriBridge;
+  if (!bridge?.init || !(await bridge.init())) return false;
+
+  await bridge.onOpenProjectFile?.((filePath) => {
+    void openDesktopProjectPath(filePath);
+  });
+
+  const pendingPath = await bridge.takePendingOpenFile?.();
+  if (!pendingPath) return false;
+  await openDesktopProjectPath(pendingPath);
+  return true;
+}
+
+async function openDesktopProjectPath(filePath) {
+  const bridge = window.TauriBridge;
+  if (!filePath || !bridge?.readTextFile) return false;
+  const content = await bridge.readTextFile(filePath);
+  if (!content) {
+    toast("无法读取关联的项目文件");
+    return false;
+  }
+  importProjectFromText(content, filePath);
+  return true;
+}
+
+async function openBrowserProjectFile() {
+  const file = els.projectOpenInput?.files?.[0];
+  if (!file) return;
+  try {
+    importProjectFromText(await file.text(), file.name);
+  } finally {
+    els.projectOpenInput.value = "";
+  }
+}
+
+function importProjectFromText(content, sourceLabel = "项目文件") {
+  try {
+    const parsed = JSON.parse(String(content || "").replace(/^\uFEFF/, ""));
+    saveProject(false);
+    state = normalizeImportedProject(parsed);
+    allAssets = mergeAssets(state.assets, allAssets);
+    state.assets = allAssets;
+    undoStack = [];
+    setSelectedNodeIds([state.nodes[0]?.id].filter(Boolean));
+    state.selectedAssetId = null;
+    els.projectTitle.value = state.title;
+    persistProjectState();
+    render();
+    toast(`已打开：${sourceLabel}`);
+  } catch (error) {
+    console.error(error);
+    toast("无法打开项目文件：请确认是 Master Canvas JSON");
+  }
+}
+
+function normalizeImportedProject(parsed) {
+  if (Array.isArray(parsed.nodes)) {
+    const project = {
+      ...createDefaultProject(),
+      ...parsed,
+      id: parsed.id || uid("project"),
+      title: parsed.title || parsed.name || "导入的影视项目画布",
+      createdAt: parsed.createdAt || now(),
+      updatedAt: now(),
+      continuity: { ...defaultContinuity(), ...(parsed.continuity || {}) },
+      assets: Array.isArray(parsed.assets) ? parsed.assets.map(normalizeAsset) : [],
+      nodes: parsed.nodes.map(normalizeNode),
+    };
+    return project;
+  }
+
+  if (Array.isArray(parsed.canvases)) {
+    const canvas = parsed.canvases.find((item) => item.id === parsed.activeCanvasId) || parsed.canvases[0] || {};
+    const cards = Array.isArray(canvas.cards) ? canvas.cards : [];
+    return {
+      ...createDefaultProject(),
+      id: parsed.id || uid("project"),
+      title: parsed.name || canvas.name || "导入的影视项目画布",
+      createdAt: parsed.createdAt || now(),
+      updatedAt: now(),
+      view: {
+        x: Number(canvas.panX ?? canvas.pan_x ?? 520),
+        y: Number(canvas.panY ?? canvas.pan_y ?? 230),
+        scale: Number(canvas.zoom || 0.9),
+      },
+      nodes: cards.map((card, index) =>
+        makeNode(card.cardType || card.card_type || card.type || "note", Number(card.x || index * 320), Number(card.y || 0), {
+          title: card.title || `导入卡片 ${index + 1}`,
+          notes: card.content || card.notes || "",
+          prompt: card.prompt || "",
+          negativePrompt: card.negativePrompt || card.negative_prompt || "",
+          tags: Array.isArray(card.tags) ? card.tags.join(", ") : card.tags || "",
+          w: Number(card.width || card.w || 270),
+          h: Number(card.height || card.h || 180),
+          metadata: card.metadata || {},
+        }),
+      ),
+    };
+  }
+
+  throw new Error("Unsupported project shape");
+}
+
+function normalizeAsset(asset) {
+  return {
+    id: asset.id || uid("asset"),
+    name: asset.name || "未命名资源",
+    type: asset.type || "reference-link",
+    mime: asset.mime || "application/octet-stream",
+    size: Number(asset.size || 0),
+    dataUrl: asset.dataUrl || "",
+    externalUrl: asset.externalUrl || "",
+    createdAt: asset.createdAt || now(),
+    updatedAt: asset.updatedAt || now(),
+    favorite: Boolean(asset.favorite),
+    archived: Boolean(asset.archived),
+    inbox: Boolean(asset.inbox),
+    tags: asset.tags || "",
+    notes: asset.notes || "",
   };
 }
 
@@ -642,7 +909,7 @@ function undoLastChange() {
   persistProjectState();
   render();
   updateUndoButton();
-  toast("Undone");
+  toast("已撤销上一步");
 }
 
 function updateUndoButton() {
@@ -698,9 +965,12 @@ function wireEvents() {
       updateUndoButton();
       els.projectTitle.value = state.title;
       render();
-      toast(`Opened ${state.title}`);
+      toast(`已打开：${state.title}`);
     }
   });
+  els.loadDemoBtn?.addEventListener("click", () => void loadChineseDemoProject());
+  els.openProjectBtn?.addEventListener("click", () => void openProjectFile());
+  els.projectOpenInput?.addEventListener("change", () => void openBrowserProjectFile());
   els.undoBtn.addEventListener("click", undoLastChange);
   els.newCanvasBtn.addEventListener("click", createNewCanvas);
   els.templatesBtn.addEventListener("click", openTemplatesDialog);
@@ -824,7 +1094,7 @@ function setActiveTool(tool, announce = true) {
   els.viewport.dataset.tool = activeTool;
   els.viewport.classList.toggle("is-hand-tool", activeTool === "hand");
   els.viewport.classList.toggle("is-select-tool", activeTool === "select");
-  if (announce) toast(activeTool === "hand" ? "Hand mode: drag to pan" : "Cursor mode: select and lasso");
+  if (announce) toast(activeTool === "hand" ? "平移模式：拖动画布" : "选择模式：可选中和框选");
 }
 
 function assetSizeLabel() {
@@ -908,27 +1178,27 @@ function readinessForNode(node) {
   const readyStatus = ["ready", "approved"].includes(node.status);
 
   if (isWorkflowNode(node)) {
-    add("start frame", node.startAssetId || node.sourceNodeId);
-    add("generation prompt", node.prompt?.trim());
-    add("ready status", readyStatus);
+    add("起始帧 / 来源", node.startAssetId || node.sourceNodeId);
+    add("生成提示词", node.prompt?.trim());
+    add("状态可执行", readyStatus);
   } else if (node.type === "section" || node.type === "scene" || node.type === "shot") {
-    add("scene description", node.overallPrompt?.trim() || node.notes?.trim());
-    add("style direction", node.stylePrompt?.trim() || node.tags?.toLowerCase().includes("style"));
-    add("music/sound direction", node.musicPrompt?.trim() || node.tags?.toLowerCase().includes("music"));
+    add("场景描述", node.overallPrompt?.trim() || node.notes?.trim());
+    add("风格方向", node.stylePrompt?.trim() || node.tags?.toLowerCase().includes("style"));
+    add("音乐 / 声音方向", node.musicPrompt?.trim() || node.tags?.toLowerCase().includes("music"));
   } else if (node.type === "placeholder") {
-    add("need described", node.notes?.trim() || node.prompt?.trim() || node.neededFor?.trim());
-    add("resolved", readyStatus || node.assetId || node.referenceAssetId || node.referenceUrl);
+    add("需求已说明", node.notes?.trim() || node.prompt?.trim() || node.neededFor?.trim());
+    add("已解决", readyStatus || node.assetId || node.referenceAssetId || node.referenceUrl);
   } else if (node.type === "styleRef") {
-    add("reference attached", node.referenceUrl || node.referenceAssetId || node.notes?.trim());
-    add("style direction", node.stylePrompt?.trim() || node.notes?.trim());
+    add("已附参考", node.referenceUrl || node.referenceAssetId || node.notes?.trim());
+    add("风格方向", node.stylePrompt?.trim() || node.notes?.trim());
   } else if (node.type === "musicRef") {
-    add("reference attached", node.referenceUrl || node.referenceAssetId || node.notes?.trim());
-    add("music direction", node.musicPrompt?.trim() || node.notes?.trim());
+    add("已附参考", node.referenceUrl || node.referenceAssetId || node.notes?.trim());
+    add("声音方向", node.musicPrompt?.trim() || node.notes?.trim());
   } else if (node.type === "media") {
-    add("asset attached", node.assetId);
-    add("prompt or notes", node.prompt?.trim() || node.notes?.trim());
+    add("素材已关联", node.assetId);
+    add("提示词或备注", node.prompt?.trim() || node.notes?.trim());
   } else {
-    add("notes", node.notes?.trim() || node.prompt?.trim());
+    add("备注", node.notes?.trim() || node.prompt?.trim());
   }
 
   const done = checks.filter((check) => check.pass).length;
@@ -938,21 +1208,117 @@ function readinessForNode(node) {
 function renderShotList() {
   if (!els.shotListContent || els.shotListPanel.classList.contains("is-hidden")) return;
   const items = state.nodes
-    .filter((node) => ["section", "scene", "shot", "workflow", "imageWorkflow", "placeholder"].includes(node.type))
-    .sort((a, b) => a.y - b.y || a.x - b.x);
+    .filter((node) => NAVIGABLE_NODE_TYPES.has(node.type))
+    .sort(sortNodesByCanvasOrder);
+  const sections = state.nodes.filter((node) => node.type === "section").sort(sortNodesByCanvasOrder);
+  const groupedIds = new Set(sections.map((section) => section.id));
+  const groups = sections.map((section) => {
+    const children = items
+      .filter((node) => node.id !== section.id && moduleForNode(node)?.id === section.id)
+      .sort(sortNodesByCanvasOrder);
+    children.forEach((node) => groupedIds.add(node.id));
+    return { section, children };
+  });
+  const ungrouped = items.filter((node) => !groupedIds.has(node.id));
+  const totalReady = items.reduce((sum, node) => sum + readinessForNode(node).done, 0);
+  const totalChecks = items.reduce((sum, node) => sum + readinessForNode(node).total, 0);
+
   els.shotListContent.innerHTML = items.length
-    ? items
-        .map((node) => {
-          const ready = readinessForNode(node);
-          return `
-            <button class="shot-list-item" type="button" data-node-id="${node.id}">
-              <strong>${esc(node.title)}</strong>
-              <span>${esc(nodeTypeLabel(node.type))} · ${ready.done}/${ready.total} ready</span>
-            </button>
-          `;
-        })
-        .join("")
-    : `<p class="help-text">Add sections, scenes, shots, workflows, or placeholders to build a navigator.</p>`;
+    ? `
+        <div class="nav-overview" aria-label="项目导航概览">
+          <span><strong>${sections.length}</strong> 个制作模块</span>
+          <span><strong>${state.nodes.filter((node) => node.type === "shot").length}</strong> 张分镜</span>
+          <span><strong>${state.nodes.filter((node) => isWorkflowNode(node)).length}</strong> 条工作流</span>
+          <span><strong>${totalReady}/${totalChecks}</strong> 就绪项</span>
+          <p>本地优先 · 无需账号 · 剧本不上云</p>
+        </div>
+        ${groups.map(({ section, children }) => renderModuleNavGroup(section, children)).join("")}
+        ${ungrouped.length ? `
+          <div class="nav-module-group">
+            <div class="nav-module-title">未归入模块</div>
+            <div class="nav-module-items">
+              ${ungrouped.map((node) => renderShotListButton(node, true)).join("")}
+            </div>
+          </div>
+        ` : ""}
+      `
+    : `<p class="help-text">添加剧本、场景、镜头、工作流或待补项后，这里会形成导航。</p>`;
+}
+
+function renderModuleNavGroup(section, children) {
+  const moduleKey = moduleColorKey(section);
+  const stats = [
+    [children.filter((node) => node.type === "shot").length, "分镜"],
+    [children.filter((node) => isWorkflowNode(node)).length, "工作流"],
+    [children.filter((node) => node.type === "character").length, "角色"],
+    [children.filter((node) => node.type === "styleRef" || node.type === "musicRef").length, "参考"],
+    [children.filter((node) => node.type === "placeholder").length, "待补"],
+  ].filter(([count]) => count > 0);
+  const label = MODULE_NAV_LABELS[moduleKey] || MODULE_NAV_LABELS.general;
+  return `
+    <div class="nav-module-group module-${esc(moduleKey)}">
+      <div class="nav-module-title">
+        <span>${esc(label)}</span>
+        <small>${stats.length ? stats.map(([count, name]) => `${count} ${name}`).join(" / ") : "等待补充卡片"}</small>
+      </div>
+      ${renderShotListButton(section, false, `${children.length} 张关联卡片`)}
+      ${children.length ? `
+        <div class="nav-module-items">
+          ${children.map((node) => renderShotListButton(node, true)).join("")}
+        </div>
+      ` : `<p class="nav-empty">这个模块还没有关联卡片。</p>`}
+    </div>
+  `;
+}
+
+function renderShotListButton(node, compact = false, extra = "") {
+  const ready = readinessForNode(node);
+  const nav = nodeNavigationMeta(node.type);
+  const status = statusLabel(node.status || "draft");
+  const readyRatio = ready.total ? Math.round((ready.done / ready.total) * 100) : 100;
+  const moduleKey = moduleColorKey(node);
+  const kind = nodeTypeLabel(node.type);
+  const subtitle = [kind === nav.label ? "" : kind, status, `${ready.done}/${ready.total} 已就绪`, extra].filter(Boolean).join(" · ");
+  return `
+    <button class="shot-list-item nav-${esc(nav.key)} module-${esc(moduleKey)} ${compact ? "is-child" : "is-module"}" type="button" data-node-id="${node.id}">
+      <span class="nav-item-meta">
+        <b>${esc(nav.label)}</b>
+        <em>${readyRatio}%</em>
+      </span>
+      <strong>${esc(node.title)}</strong>
+      <span>${esc(subtitle)}</span>
+    </button>
+  `;
+}
+
+function moduleForNode(node) {
+  if (!node) return null;
+  if (node.type === "section") return node;
+  const sections = state.nodes.filter((item) => item.type === "section");
+  let cursor = node;
+  const visited = new Set();
+  while (cursor?.sourceNodeId && !visited.has(cursor.id)) {
+    visited.add(cursor.id);
+    const source = nodeById(cursor.sourceNodeId);
+    if (source?.type === "section") return source;
+    cursor = source;
+  }
+  return sections
+    .filter((section) => nodesInsideSection(section).some((item) => item.id === node.id))
+    .sort((a, b) => (a.w * a.h) - (b.w * b.h))[0] || null;
+}
+
+function moduleColorKey(node) {
+  const module = node?.type === "section" ? node : moduleForNode(node);
+  const text = `${module?.title || node?.title || ""} ${module?.tags || node?.tags || ""}`;
+  if (/剧本|主题|故事|节拍/.test(text)) return "script";
+  if (/角色|表演|服装|造型/.test(text)) return "character";
+  if (/场景|空间|美术|地点/.test(text)) return "scene";
+  if (/分镜|镜头|工作流|生成/.test(text)) return "storyboard";
+  if (/拍摄|计划|现场|制片|通告/.test(text)) return "schedule";
+  if (/声音|音乐|后期|广播/.test(text)) return "sound";
+  if (/交付|版本|审阅|平台规格/.test(text)) return "delivery";
+  return "general";
 }
 
 function onShotListClick(event) {
@@ -961,10 +1327,26 @@ function onShotListClick(event) {
   jumpToNode(id);
 }
 
+function nodeNavigationMeta(type = "note") {
+  if (type === "section") return { key: "section", label: "制作模块" };
+  if (type === "note") return { key: "note", label: "备注" };
+  if (type === "scene") return { key: "scene", label: "场景" };
+  if (type === "shot") return { key: "shot", label: "分镜" };
+  if (type === "workflow" || type === "imageWorkflow") return { key: "workflow", label: "生成工作流" };
+  if (type === "character") return { key: "character", label: "角色" };
+  if (type === "placeholder") return { key: "placeholder", label: "待补任务" };
+  if (type === "styleRef") return { key: "reference", label: "风格参考" };
+  if (type === "musicRef") return { key: "reference", label: "声音参考" };
+  if (type === "media") return { key: "media", label: "素材" };
+  return { key: "note", label: "卡片" };
+}
+
 function jumpToNode(id) {
   const node = nodeById(id);
   if (!node) return;
   const rect = els.viewport.getBoundingClientRect();
+  const preferredScale = node.type === "section" ? 0.56 : 0.78;
+  state.view.scale = clamp(Math.max(state.view.scale, preferredScale), 0.28, node.type === "section" ? 0.7 : 1.1);
   state.view.x = rect.width / 2 - (node.x + node.w / 2) * state.view.scale;
   state.view.y = rect.height / 2 - (node.y + node.h / 2) * state.view.scale;
   setSelectedNodeIds([node.id]);
@@ -1110,7 +1492,404 @@ function createNewCanvas() {
   els.projectTitle.value = state.title;
   persistProjectState();
   render();
-  toast("New canvas created");
+  exposeSmokeState();
+  toast("已新建空白影视画布");
+}
+
+async function loadChineseDemoProject() {
+  saveProject(false);
+  const demoAssets = createChineseDemoAssets();
+  for (const asset of demoAssets) {
+    try {
+      await putAsset(asset);
+    } catch (error) {
+      console.warn("Demo asset was not written to IndexedDB:", error);
+    }
+  }
+
+  allAssets = mergeAssets(demoAssets, allAssets);
+  undoStack = [];
+  state = createDefaultProject();
+  state.title = nextDemoTitle();
+  state.view = { x: 760, y: 440, scale: 0.62 };
+  state.assets = allAssets;
+  state.continuity = {
+    characters: "林岚：28 岁，剪辑师，夜班后赶末班地铁；始终戴一只旧银色耳机。周远：35 岁，地铁维修员，沉默但观察细节。小雨：9 岁，只通过广播和手写便签出现。",
+    wardrobe: "林岚：灰蓝色风衣、白色帆布包、银色耳机；周远：深绿维修夹克、反光条、安全帽。服装颜色不随场景漂移。",
+    locations: "主要空间为末班地铁车厢、站台、监控室、出站口雨夜街道；空间关系保持从车厢向控制室再到出口推进。",
+    props: "银色耳机、折角车票、红色信号灯、手写便签、站台电子钟。耳机和车票是贯穿线索。",
+    styleRules: "本地现实主义质感；低饱和青绿色夜景；手持轻微呼吸感；镜头尽量克制，悬疑点靠声音和空间调度推进。",
+    neverChange: "林岚的耳机、风衣和白色帆布包不能变；地铁线路名固定为 17 号线；电子钟时间从 23:47 推进到 00:12。",
+  };
+  state.nodes = createChineseDemoNodes(demoAssets);
+  setSelectedNodeIds([state.nodes[0]?.id].filter(Boolean));
+  state.selectedAssetId = demoAssets[0]?.id || null;
+  els.projectTitle.value = state.title;
+  panelLayout = { ...panelLayout, assetWidth: 320, inspectorWidth: 360 };
+  inspectorOpen = false;
+  applyPanelLayout();
+  savePanelLayout();
+  persistProjectState();
+  focusChineseDemoOpeningView();
+  persistProjectState();
+  exposeSmokeState();
+  toast("已加载中文示例：短片/微短剧项目总控台");
+}
+
+function focusChineseDemoOpeningView() {
+  const focusTitles = ["项目总览", "剧本与主题", "角色与表演", "分镜与生成工作流"];
+  const focusNodes = state.nodes.filter((node) => focusTitles.some((title) => node.title?.includes(title)));
+  fitViewToNodes(focusNodes.length ? focusNodes : state.nodes, {
+    padding: 44,
+    minScale: 0.38,
+    maxScale: 0.64,
+    persist: false,
+  });
+}
+
+function nextDemoTitle() {
+  const base = "短片/微短剧项目总控台｜《最后一班地铁》";
+  const existing = new Set(projects.map((project) => project.title));
+  if (!existing.has(base)) return base;
+  let index = 2;
+  while (existing.has(`${base} ${index}`)) index += 1;
+  return `${base} ${index}`;
+}
+
+function createChineseDemoAssets() {
+  const base = [
+    {
+      name: "影像参考｜雨夜地铁冷绿色调",
+      type: "video-link",
+      externalUrl: "https://example.com/master-canvas/demo/subway-night-look",
+      tags: "风格参考, 夜景, 地铁, 冷绿色",
+      notes: "用于色彩、反光、车厢荧光灯和站台纵深参考；不上传任何剧本或素材。",
+    },
+    {
+      name: "声音参考｜末班车广播与低频环境",
+      type: "music-link",
+      externalUrl: "https://example.com/master-canvas/demo/last-train-sound",
+      tags: "声音设计, 广播, 低频, 环境声",
+      notes: "用于站台广播、车门蜂鸣、轨道低频和远处雨声的声音方向。",
+    },
+    {
+      name: "交付参考｜导演审阅版分镜包",
+      type: "reference-link",
+      externalUrl: "https://example.com/master-canvas/demo/storyboard-handoff",
+      tags: "交付, 分镜, 审阅",
+      notes: "用于说明最终需要交给导演/制片/生成执行的材料结构。",
+    },
+  ];
+  return base.map((asset) => normalizeAsset({
+    ...asset,
+    id: uid("asset"),
+    mime: "text/uri-list",
+    size: 0,
+    createdAt: now(),
+    updatedAt: now(),
+    favorite: true,
+    archived: false,
+    inbox: false,
+  }));
+}
+
+function createChineseDemoNodes(demoAssets) {
+  const assetsByName = new Map(demoAssets.map((asset) => [asset.name, asset]));
+  const styleAsset = assetsByName.get("影像参考｜雨夜地铁冷绿色调");
+  const soundAsset = assetsByName.get("声音参考｜末班车广播与低频环境");
+  const deliveryAsset = assetsByName.get("交付参考｜导演审阅版分镜包");
+  const nodes = [];
+  const add = (type, x, y, overrides = {}) => {
+    const node = makeNode(type, x, y, overrides);
+    nodes.push(node);
+    return node;
+  };
+
+  const overview = add("note", -1320, -820, {
+    title: "项目总览｜《最后一班地铁》",
+    notes: "10 分钟短片 / 竖屏微短剧试制项目。Master Canvas 作为影视项目总控创作画布：剧本、角色、场景、分镜、拍摄计划、声音、交付节点全部在本机整理，无需账号、无需 API 密钥、剧本不上云。",
+    tags: "项目总控, 本地优先, 中文影视创作",
+    status: "ready",
+    w: 380,
+  });
+
+  const script = add("section", -1220, -560, {
+    title: "剧本与主题",
+    overallPrompt: "女剪辑师林岚在末班地铁上听见一段本不该出现的儿童广播，她必须在列车停运前找到广播来源。",
+    stylePrompt: "现实主义悬疑，不靠怪力乱神，重点是空间压迫、声音线索和人物选择。",
+    musicPrompt: "前半段保留环境声；转折处加入极低频脉冲；结尾只留下雨声和远处车门提示音。",
+    tags: "剧本, 主题, 故事核",
+    status: "ready",
+    w: 860,
+    h: 380,
+  });
+  add("note", -1110, -385, {
+    title: "故事梗概",
+    notes: "林岚发现广播里的女孩小雨可能曾在这条线路失踪。维修员周远阻止她进入封闭车厢，却在监控里看到小雨留下的新便签。",
+    tags: "梗概, logline",
+    status: "ready",
+    sourceNodeId: script.id,
+  });
+  add("shot", -760, -385, {
+    title: "核心节拍",
+    overallPrompt: "1. 末班车空车厢；2. 广播异常；3. 维修通道追查；4. 监控室确认便签；5. 雨夜出口开放式结尾。",
+    stylePrompt: "每个节拍都有明确空间推进：车厢 -> 站台 -> 维修通道 -> 监控室 -> 出口。",
+    musicPrompt: "声音线索先于视觉线索出现，广播内容逐步从噪声变成可辨认句子。",
+    tags: "节拍, 剧本",
+    status: "ready",
+    sourceNodeId: script.id,
+  });
+
+  const characters = add("section", -260, -560, {
+    title: "角色与表演",
+    overallPrompt: "控制角色身份、表演层次、服装和情绪连续性，避免生成或执行中人物漂移。",
+    stylePrompt: "表演克制，惊恐不外放；通过停顿、眼神和手部动作推进心理变化。",
+    musicPrompt: "角色情绪不靠配乐煽动，更多用呼吸、衣料摩擦和远处广播承压。",
+    tags: "角色, 表演, 连续性",
+    status: "ready",
+    w: 860,
+    h: 380,
+    sourceNodeId: script.id,
+  });
+  const lin = add("character", -150, -385, {
+    title: "角色｜林岚",
+    notes: "28 岁剪辑师。外表冷静，习惯把情绪压进工作流程。她对声音异常极度敏感，因为母亲曾在地铁事故中失联。",
+    tags: "主角, 林岚, 连续性",
+    status: "ready",
+    sourceNodeId: characters.id,
+  });
+  add("character", 210, -385, {
+    title: "角色｜周远",
+    notes: "35 岁地铁维修员。知道线路旧事故的真相，但不相信林岚能承受后果。表演重点是克制和回避。",
+    tags: "配角, 周远, 连续性",
+    status: "ready",
+    sourceNodeId: characters.id,
+  });
+
+  const scenes = add("section", -1220, -80, {
+    title: "场景与空间",
+    overallPrompt: "把所有场景按空间关系铺开：车厢、站台、维修通道、监控室、出口雨夜。",
+    stylePrompt: "空间应有真实地铁站逻辑，灯光方向和电子钟时间连续。",
+    musicPrompt: "每个空间有独立环境声：车厢空调、电轨低频、通道风声、监控室电流声、雨声。",
+    tags: "场景, 空间, 美术",
+    status: "ready",
+    w: 860,
+    h: 430,
+    sourceNodeId: overview.id,
+  });
+  const scene1 = add("scene", -1110, 95, {
+    title: "场景 01｜末班车空车厢",
+    overallPrompt: "林岚独自坐在车厢末端，电子钟 23:47，车窗反射出空座位和她的旧银色耳机。",
+    stylePrompt: "冷白顶灯、玻璃反射、低饱和青绿色，镜头从中景慢慢收紧。",
+    musicPrompt: "空调低频、轨道规律震动，广播先是噪声。",
+    tags: "车厢, 开场",
+    status: "ready",
+    sourceNodeId: scenes.id,
+  });
+  const scene2 = add("scene", -760, 95, {
+    title: "场景 02｜封闭站台",
+    overallPrompt: "列车误停在不开放站台，站名牌一半熄灭，林岚看到手写便签贴在玻璃门内侧。",
+    stylePrompt: "站台纵深强，红色信号灯成为唯一暖色。",
+    musicPrompt: "广播变清晰，女孩说：别让他关灯。",
+    tags: "站台, 转折",
+    status: "ready",
+    sourceNodeId: scene1.id,
+  });
+  const scene3 = add("scene", -410, 95, {
+    title: "场景 03｜监控室与雨夜出口",
+    overallPrompt: "周远带林岚进监控室，屏幕显示小雨在几分钟前经过；结尾出口打开，雨夜中传来同一句广播。",
+    stylePrompt: "监控屏冷光与出口雨夜反光对照，结尾不解释过度。",
+    musicPrompt: "去掉旋律，只保留雨声、呼吸和远处车门提示。",
+    tags: "监控室, 结尾",
+    status: "review",
+    sourceNodeId: scene2.id,
+  });
+
+  const storyboard = add("section", -260, -80, {
+    title: "分镜与生成工作流",
+    overallPrompt: "把关键镜头拆成可执行的镜头卡和图生视频卡，用于导演审阅、拍摄参考或 AI 视频生成交接。",
+    stylePrompt: "分镜优先服务叙事和空间，不堆砌奇观。",
+    musicPrompt: "每条工作流保留声音意图，方便后续声音设计和剪辑对齐。",
+    tags: "分镜, 镜头, 工作流",
+    status: "ready",
+    w: 980,
+    h: 520,
+    sourceNodeId: scenes.id,
+  });
+  const shot1 = add("shot", -150, 100, {
+    title: "分镜 01｜空车厢慢推",
+    overallPrompt: "林岚坐在车厢末端，镜头从空座位慢慢推向她，广播噪声开始出现。",
+    shotSize: "medium",
+    cameraAngle: "eye-level",
+    cameraMovement: "慢推",
+    subjectAction: "林岚摘下一侧耳机，确认声音不是来自手机。",
+    location: "末班车车厢",
+    mood: "克制、压迫",
+    lighting: "冷白顶灯，窗面反射",
+    lensFeel: "35mm 轻微广角",
+    priority: "must-have",
+    tags: "分镜, 开场",
+    status: "ready",
+    sourceNodeId: storyboard.id,
+  });
+  add("workflow", 205, 90, {
+    title: "工作流 01｜车厢开场图生视频",
+    prompt: "固定到轻微慢推，空车厢冷白灯，女剪辑师林岚摘下一侧银色耳机，听见广播噪声，表演克制，保持风衣、耳机、帆布包一致。",
+    negativePrompt: "夸张恐怖表情、变脸、车厢结构错乱、多余乘客、赛博朋克过度霓虹",
+    shotSize: "medium",
+    cameraAngle: "eye-level",
+    cameraMovement: "慢推",
+    duration: "6s",
+    status: "ready",
+    tags: "图生视频, 开场",
+    sourceNodeId: shot1.id,
+  });
+  const shot2 = add("shot", -150, 290, {
+    title: "分镜 02｜红色信号灯与便签",
+    overallPrompt: "林岚走到站台玻璃门前，红色信号灯闪烁，便签上的字被雨水和反光遮住一半。",
+    shotSize: "close-up",
+    cameraAngle: "over-the-shoulder",
+    cameraMovement: "手持轻微呼吸",
+    subjectAction: "她抬手擦玻璃，读出第一句便签。",
+    location: "封闭站台",
+    mood: "发现线索",
+    lighting: "冷绿环境中只有红色信号灯",
+    lensFeel: "50mm",
+    priority: "high",
+    tags: "分镜, 道具, 便签",
+    status: "ready",
+    sourceNodeId: storyboard.id,
+  });
+  add("workflow", 205, 280, {
+    title: "工作流 02｜站台线索图生视频",
+    prompt: "过肩近景，林岚站在封闭站台玻璃门前，红色信号灯闪烁，手写便签贴在玻璃另一侧。动作缓慢，重点是她擦玻璃读字。",
+    negativePrompt: "鬼影、血迹、夸张惊吓、文字乱码、角色换装",
+    shotSize: "close-up",
+    cameraAngle: "over-the-shoulder",
+    cameraMovement: "手持轻微呼吸",
+    duration: "6s",
+    status: "review",
+    tags: "图生视频, 线索",
+    sourceNodeId: shot2.id,
+    attempts: [
+      {
+        id: uid("attempt"),
+        label: "导演审阅 v1",
+        status: "candidate",
+        outputUrl: "",
+        seed: "seed 1847 / motion 0.42",
+        notes: "红色信号灯有效，但便签字太清楚；下一版让文字只露出关键词。",
+        createdAt: now(),
+      },
+    ],
+  });
+
+  const schedule = add("section", -1220, 520, {
+    title: "拍摄计划与现场任务",
+    overallPrompt: "把拍摄日、场地、道具、部门任务和风险集中管理，方便小团队开拍前对齐。",
+    stylePrompt: "现场执行优先：能否拍到、谁负责、什么时候确认。",
+    musicPrompt: "现场收音需要采集车厢空调、站台广播、车门蜂鸣和雨声 wild track。",
+    tags: "拍摄计划, 制片, 现场",
+    status: "ready",
+    w: 860,
+    h: 410,
+    sourceNodeId: scenes.id,
+  });
+  add("note", -1110, 690, {
+    title: "拍摄日程",
+    notes: "D1 22:00-02:00：车厢与站台；D2 20:00-23:30：监控室与出口雨夜；D3 预留补拍 / 道具特写。",
+    tags: "通告, 排期",
+    status: "ready",
+    sourceNodeId: schedule.id,
+  });
+  add("placeholder", -760, 690, {
+    title: "待补｜地铁站授权与封控范围",
+    neededFor: "approval",
+    prompt: "确认末班车车厢、封闭站台、监控室、出站口的拍摄许可和安全边界。",
+    notes: "制片负责人：待定；最晚锁定时间：开拍前 5 天。",
+    tags: "审批, 场地",
+    status: "blocked",
+    sourceNodeId: schedule.id,
+  });
+  add("placeholder", -410, 690, {
+    title: "待补｜关键道具清单",
+    neededFor: "image",
+    prompt: "旧银色耳机、折角车票、手写便签、红色信号灯贴纸、白色帆布包。",
+    notes: "道具需要拍摄标准参考照，进入连续性圣经。",
+    tags: "道具, 连续性",
+    status: "review",
+    sourceNodeId: schedule.id,
+  });
+
+  const sound = add("section", -260, 560, {
+    title: "声音设计与音乐",
+    overallPrompt: "声音是叙事线索，不只是氛围。广播、低频、雨声和静默承担悬疑推进。",
+    stylePrompt: "避免常规恐怖音效，采用真实环境声的节奏变化制造不安。",
+    musicPrompt: "音乐只在片尾前出现 12 秒，使用低频脉冲和单音钢琴，不盖过广播。",
+    tags: "声音, 音乐, 后期",
+    status: "ready",
+    w: 860,
+    h: 410,
+    sourceNodeId: script.id,
+  });
+  add("musicRef", -150, 735, {
+    title: "声音参考｜末班车广播",
+    notes: "广播从不可辨识噪声逐步变成儿童声音；结尾再次模糊化，保留开放性。",
+    musicPrompt: "车门蜂鸣 2 次后进入 38Hz 低频；广播女声需像站内系统而非旁白。",
+    referenceAssetId: soundAsset?.id || "",
+    tags: "广播, 环境声, 低频",
+    status: "ready",
+    sourceNodeId: sound.id,
+  });
+  add("styleRef", 205, 735, {
+    title: "影像参考｜冷绿色夜景",
+    notes: "用于统一车厢、站台和监控室的冷绿色调；红色信号灯只在转折点出现。",
+    stylePrompt: "低饱和青绿、轻微颗粒、真实镜头呼吸，避免过度赛博霓虹。",
+    referenceAssetId: styleAsset?.id || "",
+    influenceUse: "色彩、灯光、空间纵深、反光",
+    influenceStrength: "medium",
+    doNotCopy: "不照搬参考构图，不使用品牌或真实站名。",
+    tags: "视觉风格, 参考",
+    status: "ready",
+    sourceNodeId: sound.id,
+  });
+
+  const delivery = add("section", 760, -560, {
+    title: "交付节点与版本控制",
+    overallPrompt: "把每次给导演、制片、剪辑、生成执行的输出物定义清楚，避免只剩一堆散乱提示词。",
+    stylePrompt: "交付物按版本冻结，修改走检查点，不覆盖上版。",
+    musicPrompt: "声音参考和音乐方向必须随分镜一起导出。",
+    tags: "交付, 版本, 审阅",
+    status: "ready",
+    w: 820,
+    h: 500,
+    sourceNodeId: overview.id,
+  });
+  add("note", 880, -375, {
+    title: "交付 01｜导演审阅包",
+    notes: "导出 Markdown + 分镜 HTML/PDF：包含故事梗概、角色规则、关键镜头、声音方向、待补项。",
+    tags: "导演审阅, 分镜",
+    status: "ready",
+    sourceNodeId: delivery.id,
+    referenceAssetId: deliveryAsset?.id || "",
+  });
+  add("note", 1220, -375, {
+    title: "交付 02｜生成执行包",
+    notes: "导出 Handoff ZIP：包含 shot-package.md、storyboard.html、shot_order.csv、场景 bins、图生视频提示词。",
+    tags: "生成执行, Handoff ZIP",
+    status: "ready",
+    sourceNodeId: delivery.id,
+  });
+  add("placeholder", 880, -185, {
+    title: "待补｜客户 / 平台规格",
+    neededFor: "approval",
+    prompt: "确认横屏 16:9、竖屏 9:16、字幕安全区、片尾 logo、交付码率和文件命名规则。",
+    tags: "交付规格, 审批",
+    status: "review",
+    sourceNodeId: delivery.id,
+  });
+
+  return nodes;
 }
 
 function openContinuityDialog() {
@@ -1137,76 +1916,76 @@ function saveContinuity() {
   queueSave();
   renderInspector();
   els.continuityDialog.close();
-  toast("Continuity bible saved");
+  toast("连续性圣经已保存");
 }
 
 const TEMPLATE_DEFS = [
   {
     id: "music-video",
-    title: "Music Video",
-    description: "Performance, story scenes, music direction, style refs, and generation attempts.",
+    title: "音乐短片",
+    description: "表演段落、叙事插入、音乐方向、风格参考与生成尝试。",
     nodes: [
-      ["section", -1080, -520, { title: "Performance Look", overallPrompt: "Main performance world, lighting, wardrobe, and camera language.", status: "draft" }],
-      ["placeholder", -990, -360, { title: "Hero Performance Image", neededFor: "image", prompt: "Missing hero image/reference for the main performance look." }],
-      ["shot", -650, -360, { title: "Opening Hook Shot", shotSize: "close-up", cameraMovement: "push in", priority: "high" }],
-      ["workflow", -270, -370, { title: "Opening Hook I2V", prompt: "Describe the first 3 seconds, camera motivation, and performance energy." }],
-      ["section", -1080, 40, { title: "Narrative Inserts", overallPrompt: "Story inserts, symbolic images, and transition moments.", status: "draft" }],
-      ["musicRef", -250, 110, { title: "Music Direction", musicPrompt: "Tempo, edit rhythm, instrumentation, and emotion notes." }],
-      ["styleRef", 120, 110, { title: "Video Style References", stylePrompt: "Color, pacing, framing, and references to borrow from." }],
+      ["section", -1080, -520, { title: "表演视觉", overallPrompt: "主表演空间、灯光、服装和摄影语言。", status: "draft" }],
+      ["placeholder", -990, -360, { title: "待补｜主视觉表演图", neededFor: "image", prompt: "缺少主表演段落的英雄图 / 参考图。" }],
+      ["shot", -650, -360, { title: "开场钩子镜头", shotSize: "close-up", cameraMovement: "推近", priority: "high" }],
+      ["workflow", -270, -370, { title: "开场钩子 I2V", prompt: "描述前 3 秒动作、摄影动机和表演能量。" }],
+      ["section", -1080, 40, { title: "叙事插入", overallPrompt: "故事插入、象征画面和转场瞬间。", status: "draft" }],
+      ["musicRef", -250, 110, { title: "音乐方向", musicPrompt: "速度、剪辑节奏、乐器和情绪备注。" }],
+      ["styleRef", 120, 110, { title: "影像风格参考", stylePrompt: "色彩、节奏、构图和可借鉴参考。" }],
     ],
   },
   {
     id: "short-film",
-    title: "Short Film",
-    description: "Character continuity, scene sections, shot cards, props, and review handoff.",
+    title: "短片 / 微短剧",
+    description: "角色连续性、场景分区、镜头卡、道具和审阅交付。",
     nodes: [
-      ["character", -1120, -540, { title: "Lead Character Continuity", tags: "character, continuity", notes: "Face, wardrobe, posture, and emotional range." }],
-      ["section", -1080, -260, { title: "Scene 1 Setup", overallPrompt: "Where we are, what changes, and what must stay consistent." }],
-      ["shot", -960, -100, { title: "Establishing Shot", shotSize: "wide", cameraAngle: "eye-level", cameraMovement: "slow drift" }],
-      ["workflow", -590, -110, { title: "Scene 1 I2V", prompt: "Maintain character identity and location continuity." }],
-      ["section", -1080, 300, { title: "Scene 2 Turn", overallPrompt: "Main emotional turn and visual escalation." }],
-      ["placeholder", -960, 460, { title: "Prop Reference Needed", neededFor: "style", prompt: "Prop or object reference that must be consistent." }],
-      ["note", -590, 470, { title: "Review Notes", notes: "Capture client/editor decisions here." }],
+      ["character", -1120, -540, { title: "主角连续性", tags: "角色, 连续性", notes: "脸部、服装、姿态和情绪范围。" }],
+      ["section", -1080, -260, { title: "场景 1 建立", overallPrompt: "我们在哪里，发生什么变化，哪些必须保持一致。" }],
+      ["shot", -960, -100, { title: "建立镜头", shotSize: "wide", cameraAngle: "eye-level", cameraMovement: "慢移" }],
+      ["workflow", -590, -110, { title: "场景 1 I2V", prompt: "保持角色身份和地点连续性。" }],
+      ["section", -1080, 300, { title: "场景 2 转折", overallPrompt: "主要情绪转折和视觉升级。" }],
+      ["placeholder", -960, 460, { title: "待补｜道具参考", neededFor: "style", prompt: "需要保持一致的道具或物件参考。" }],
+      ["note", -590, 470, { title: "审阅备注", notes: "记录导演 / 剪辑 / 客户决定。" }],
     ],
   },
   {
     id: "product-video",
-    title: "Product Video",
-    description: "Hero product shots, object consistency, features, proof points, and final CTA.",
+    title: "产品视频",
+    description: "产品英雄镜头、物件连续性、卖点、证明点和最终 CTA。",
     nodes: [
-      ["section", -1080, -420, { title: "Product Identity", overallPrompt: "Product form, material, scale, brand feel, and object consistency." }],
-      ["placeholder", -960, -260, { title: "Product Clean Reference", neededFor: "image", prompt: "Upload or generate the cleanest product reference." }],
-      ["shot", -610, -260, { title: "Hero Reveal", shotSize: "medium", cameraMovement: "orbit", lighting: "controlled studio glow", priority: "high" }],
-      ["workflow", -240, -270, { title: "Hero Reveal I2V", prompt: "Elegant product reveal with consistent object geometry and premium lighting." }],
-      ["section", -1080, 140, { title: "Features / Benefits", overallPrompt: "Feature cards, proof points, and supporting visuals." }],
-      ["shot", -960, 300, { title: "Feature Detail", shotSize: "macro", cameraAngle: "low angle", lensFeel: "macro commercial lens" }],
-      ["note", -610, 300, { title: "CTA / End Card", notes: "Final copy, logo, offer, and lockup." }],
+      ["section", -1080, -420, { title: "产品身份", overallPrompt: "产品形态、材质、比例、品牌质感和物件连续性。" }],
+      ["placeholder", -960, -260, { title: "待补｜产品干净参考", neededFor: "image", prompt: "上传或生成最干净的产品参考。" }],
+      ["shot", -610, -260, { title: "英雄揭示", shotSize: "medium", cameraMovement: "环绕", lighting: "可控棚拍光泽", priority: "high" }],
+      ["workflow", -240, -270, { title: "英雄揭示 I2V", prompt: "优雅产品揭示，保持物体几何和高级灯光一致。" }],
+      ["section", -1080, 140, { title: "功能 / 利益点", overallPrompt: "功能卡、证明点和支撑画面。" }],
+      ["shot", -960, 300, { title: "功能细节", shotSize: "macro", cameraAngle: "low angle", lensFeel: "商业微距镜头" }],
+      ["note", -610, 300, { title: "CTA / 片尾卡", notes: "最终文案、logo、权益和锁定版式。" }],
     ],
   },
   {
     id: "social-ad",
-    title: "Social Ad",
-    description: "Hook, proof, offer, CTA, aspect variants, and platform notes.",
+    title: "信息流广告",
+    description: "钩子、证明点、优惠、CTA、画幅版本和平台备注。",
     nodes: [
-      ["section", -1040, -360, { title: "Hook", overallPrompt: "First second visual and message." }],
-      ["shot", -910, -190, { title: "Thumb-stopping Opener", shotSize: "close-up", priority: "high", duration: "4s" }],
-      ["workflow", -540, -200, { title: "Hook I2V", aspectRatio: "9:16", duration: "4s", prompt: "Immediate motion and clear visual premise." }],
-      ["section", -1040, 140, { title: "Proof / Offer / CTA", overallPrompt: "Proof visual, offer card, and final end frame." }],
-      ["placeholder", -910, 310, { title: "Offer Copy Needed", neededFor: "text", prompt: "Final offer, disclaimer, and call-to-action copy." }],
-      ["styleRef", -540, 310, { title: "Platform Style Reference", influenceUse: "pacing, framing, caption density" }],
+      ["section", -1040, -360, { title: "钩子", overallPrompt: "第一秒画面和信息。" }],
+      ["shot", -910, -190, { title: "停留开场", shotSize: "close-up", priority: "high", duration: "4s" }],
+      ["workflow", -540, -200, { title: "钩子 I2V", aspectRatio: "9:16", duration: "4s", prompt: "立即进入动作，视觉前提清楚。" }],
+      ["section", -1040, 140, { title: "证明 / 优惠 / CTA", overallPrompt: "证明画面、优惠卡和最终结束帧。" }],
+      ["placeholder", -910, 310, { title: "待补｜优惠文案", neededFor: "text", prompt: "最终优惠、免责声明和行动号召文案。" }],
+      ["styleRef", -540, 310, { title: "平台风格参考", influenceUse: "节奏、构图、字幕密度" }],
     ],
   },
   {
     id: "character-continuity",
-    title: "Character Continuity",
-    description: "Character bible, wardrobe, expressions, locations, and consistency tests.",
+    title: "角色连续性",
+    description: "角色圣经、服装、表情、场景和一致性测试。",
     nodes: [
-      ["character", -960, -410, { title: "Hero Character", tags: "character, continuity", notes: "Canonical face and identity rules." }],
-      ["placeholder", -620, -410, { title: "Expression Sheet Needed", neededFor: "image", prompt: "Neutral, happy, intense, profile, three-quarter." }],
-      ["section", -1020, -120, { title: "Continuity Tests", overallPrompt: "Test the character across lighting, scenes, and wardrobe." }],
-      ["workflow", -900, 50, { title: "Lighting Test I2V", prompt: "Same character identity under different lighting." }],
-      ["workflow", -540, 50, { title: "Wardrobe Test I2V", prompt: "Same character identity with wardrobe continuity." }],
-      ["styleRef", -180, 50, { title: "Canonical Style", stylePrompt: "Style rules that apply to all character generations." }],
+      ["character", -960, -410, { title: "核心角色", tags: "角色, 连续性", notes: "标准脸部和身份规则。" }],
+      ["placeholder", -620, -410, { title: "待补｜表情表", neededFor: "image", prompt: "中性、开心、紧张、侧面、四分之三侧。" }],
+      ["section", -1020, -120, { title: "连续性测试", overallPrompt: "测试角色在不同灯光、场景和服装中的一致性。" }],
+      ["workflow", -900, 50, { title: "灯光测试 I2V", prompt: "同一角色身份在不同灯光下保持一致。" }],
+      ["workflow", -540, 50, { title: "服装测试 I2V", prompt: "同一角色身份和服装连续性。" }],
+      ["styleRef", -180, 50, { title: "标准风格", stylePrompt: "应用到所有角色生成的风格规则。" }],
     ],
   },
 ];
@@ -1248,11 +2027,11 @@ function onTemplateListClick(event) {
   persistProjectState();
   render();
   els.templatesDialog.close();
-  toast(`${template.title} canvas created`);
+  toast(`已创建模板画布：${template.title}`);
 }
 
 function nextTemplateTitle(title) {
-  const base = `${title} Canvas`;
+  const base = `${title}画布`;
   const existing = new Set(projects.map((project) => project.title));
   if (!existing.has(base)) return base;
   let index = 2;
@@ -1270,10 +2049,10 @@ function mergeTags(existing = "", added = "") {
 function openBatchDialog() {
   const ids = selectedNodeIds();
   if (!ids.length) {
-    toast("Select cards first");
+    toast("请先选择卡片");
     return;
   }
-  els.batchCountLabel.textContent = `${ids.length} selected card${ids.length === 1 ? "" : "s"}`;
+  els.batchCountLabel.textContent = `已选 ${ids.length} 张卡片`;
   els.batchStatus.value = "";
   els.batchTags.value = "";
   els.batchDialog.showModal();
@@ -1285,7 +2064,7 @@ function applyBatchEdit() {
   const status = els.batchStatus.value;
   const tags = els.batchTags.value.trim();
   if (!status && !tags) {
-    toast("Choose a status or add tags");
+    toast("请选择状态或追加标签");
     return;
   }
   recordUndo();
@@ -1299,7 +2078,7 @@ function applyBatchEdit() {
   queueSave();
   render();
   els.batchDialog.close();
-  toast(`Updated ${ids.length} card${ids.length === 1 ? "" : "s"}`);
+  toast(`已更新 ${ids.length} 张卡片`);
 }
 
 function readVersions(projectId = state.id) {
@@ -1323,7 +2102,7 @@ function openVersionsDialog() {
 function saveCheckpoint() {
   saveProject(false);
   const versions = readVersions();
-  const label = els.versionName.value.trim() || `Checkpoint ${versions.length + 1}`;
+  const label = els.versionName.value.trim() || `检查点 ${versions.length + 1}`;
   versions.unshift({
     id: uid("version"),
     name: label,
@@ -1333,7 +2112,7 @@ function saveCheckpoint() {
   writeVersions(versions);
   els.versionName.value = "";
   renderVersionsList();
-  toast("Checkpoint saved");
+  toast("检查点已保存");
 }
 
 function renderVersionsList() {
@@ -1348,14 +2127,14 @@ function renderVersionsList() {
                 <span>${new Date(version.createdAt).toLocaleString()}</span>
               </div>
               <div class="version-actions">
-                <button class="button compact" type="button" data-version-action="restore" data-version-id="${version.id}">Restore</button>
-                <button class="button compact" type="button" data-version-action="delete" data-version-id="${version.id}">Delete</button>
+                <button class="button compact" type="button" data-version-action="restore" data-version-id="${version.id}">恢复</button>
+                <button class="button compact" type="button" data-version-action="delete" data-version-id="${version.id}">删除</button>
               </div>
             </article>
           `,
         )
         .join("")
-    : `<p class="help-text">No checkpoints saved for this canvas yet.</p>`;
+    : `<p class="help-text">当前画布还没有保存检查点。</p>`;
 }
 
 function onVersionListClick(event) {
@@ -1369,7 +2148,7 @@ function onVersionListClick(event) {
   if (action === "delete") {
     writeVersions(versions.filter((item) => item.id !== id));
     renderVersionsList();
-    toast("Checkpoint deleted");
+    toast("检查点已删除");
     return;
   }
   if (action === "restore") {
@@ -1378,17 +2157,18 @@ function onVersionListClick(event) {
     restored.continuity = { ...defaultContinuity(), ...(version.project.continuity || {}) };
     restored.nodes = (restored.nodes || []).map(normalizeNode);
     state = restored;
+    allAssets = mergeAssets(version.project.assets || [], allAssets);
     state.assets = allAssets;
     els.projectTitle.value = state.title;
     persistProjectState();
     render();
     els.versionsDialog.close();
-    toast(`Restored ${version.name}`);
+    toast(`已恢复：${version.name}`);
   }
 }
 
 function nextUntitledTitle() {
-  const base = "Untitled Canvas";
+  const base = "未命名影视画布";
   const existing = new Set(projects.map((project) => project.title));
   if (!existing.has(base)) return base;
   let index = 2;
@@ -1721,7 +2501,7 @@ function finishLasso(event) {
     state.selectedAssetId = null;
     if (selectedIds.length) openInspectorPanel();
     render();
-    if (selectedIds.length) toast(`${selectedIds.length} card${selectedIds.length === 1 ? "" : "s"} selected`);
+    if (selectedIds.length) toast(`已选择 ${selectedIds.length} 张卡片`);
   } else {
     setSelectedNodeIds([]);
     state.selectedAssetId = null;
@@ -1788,7 +2568,7 @@ function finishNodeConnection(event) {
   state.selectedAssetId = null;
   queueSave();
   render();
-  toast("Cards connected");
+  toast("卡片已连接");
 }
 
 function targetSideFromPoint(clientX, clientY) {
@@ -1896,7 +2676,7 @@ async function importFiles(files, origin) {
   state.selectedAssetId = imported[0]?.id || null;
   queueSave();
   render();
-  toast(`${imported.length} asset${imported.length === 1 ? "" : "s"} imported`);
+  toast(`已导入 ${imported.length} 项资源`);
 }
 
 function createAssetFromFile(file) {
@@ -1927,7 +2707,7 @@ function addMediaNode(assetId, x, y, rerender = true) {
   const asset = assetById(assetId);
   if (rerender) recordUndo();
   const node = makeNode("media", x, y, {
-    title: asset?.name || "Media",
+    title: asset?.name || "素材",
     assetId,
     w: 300,
     notes: asset?.tags || "",
@@ -2065,9 +2845,9 @@ function inspectorAttemptValue(field) {
 function addAttemptFromInspector(node) {
   const outputUrl = inspectorAttemptValue("outputUrl");
   const notes = inspectorAttemptValue("notes");
-  const label = inspectorAttemptValue("label") || `Attempt ${(node.attempts || []).length + 1}`;
+  const label = inspectorAttemptValue("label") || `生成尝试 ${(node.attempts || []).length + 1}`;
   if (!outputUrl && !notes) {
-    toast("Add an output URL or notes");
+    toast("请填写输出链接或备注");
     return;
   }
   recordUndo();
@@ -2085,7 +2865,7 @@ function addAttemptFromInspector(node) {
   queueSave();
   renderInspector();
   renderNodes();
-  toast("Attempt logged");
+  toast("生成尝试已记录");
 }
 
 function markAttemptWinner(node, attemptId) {
@@ -2098,7 +2878,7 @@ function markAttemptWinner(node, attemptId) {
   node.updatedAt = now();
   queueSave();
   renderInspector();
-  toast("Winner marked");
+  toast("已标记为最终版");
 }
 
 function deleteAttempt(node, attemptId) {
@@ -2108,7 +2888,7 @@ function deleteAttempt(node, attemptId) {
   node.updatedAt = now();
   queueSave();
   renderInspector();
-  toast("Attempt deleted");
+  toast("生成尝试已删除");
 }
 
 async function attachFileToSelectedReference(file) {
@@ -2120,11 +2900,11 @@ async function attachFileToSelectedReference(file) {
       ? file.type.startsWith("audio/") || file.type.startsWith("video/")
       : file.type.startsWith("video/") || file.type.startsWith("image/");
   if (!valid) {
-    toast(node.type === "musicRef" ? "Use audio or video for music refs" : "Use video or image for style refs");
+    toast(node.type === "musicRef" ? "声音参考请使用音频或视频" : "风格参考请使用视频或图片");
     return;
   }
   const asset = await createAssetFromFile(file);
-  asset.tags = node.type === "musicRef" ? "music, audio-reference" : "style, tone, video-reference";
+  asset.tags = node.type === "musicRef" ? "音乐, 声音参考" : "风格, 调性, 影像参考";
   asset.inbox = false;
   await putAsset(asset);
   recordUndo();
@@ -2136,7 +2916,7 @@ async function attachFileToSelectedReference(file) {
   state.selectedAssetId = asset.id;
   queueSave();
   render();
-  toast("File attached to card");
+  toast("文件已关联到卡片");
 }
 
 function openReferenceDialog() {
@@ -2150,12 +2930,12 @@ function openReferenceDialog() {
 async function saveReferenceLink() {
   const externalUrl = els.referenceUrl.value.trim();
   if (!externalUrl) {
-    toast("Add a URL first");
+    toast("请先填写 URL");
     return;
   }
   const type = els.referenceType.value;
   const title = els.referenceTitle.value.trim() || inferReferenceTitle(externalUrl, type);
-  const tags = type === "video-link" ? "style, tone, video-reference" : type === "music-link" ? "music, audio-reference" : "reference";
+  const tags = type === "video-link" ? "风格, 调性, 影像参考" : type === "music-link" ? "音乐, 声音参考" : "参考";
   const asset = {
     id: uid("asset"),
     name: title,
@@ -2186,7 +2966,7 @@ async function saveReferenceLink() {
   persistProjectState();
   render();
   els.referenceDialog.close();
-  toast("Reference link added");
+  toast("参考链接已添加");
 }
 
 function inferReferenceTitle(url, type) {
@@ -2237,14 +3017,20 @@ function duplicateNode(id) {
   render();
 }
 
-function fitView() {
-  if (!state.nodes.length) {
+function fitView(options = {}) {
+  fitViewToNodes(state.nodes, options);
+}
+
+function fitViewToNodes(nodes, options = {}) {
+  const { padding = 120, minScale = 0.25, maxScale = 1.15, persist = true } = options;
+  if (!nodes.length) {
     state.view = { x: 520, y: 230, scale: 0.9 };
     render();
     return;
   }
   const rect = els.viewport.getBoundingClientRect();
-  const bounds = state.nodes.reduce(
+  if (!rect.width || !rect.height) return;
+  const bounds = nodes.reduce(
     (acc, node) => ({
       minX: Math.min(acc.minX, node.x),
       minY: Math.min(acc.minY, node.y),
@@ -2255,11 +3041,13 @@ function fitView() {
   );
   const width = bounds.maxX - bounds.minX || 1;
   const height = bounds.maxY - bounds.minY || 1;
-  const scale = clamp(Math.min((rect.width - 120) / width, (rect.height - 120) / height), 0.25, 1.15);
+  const availableWidth = Math.max(1, rect.width - padding);
+  const availableHeight = Math.max(1, rect.height - padding);
+  const scale = clamp(Math.min(availableWidth / width, availableHeight / height), minScale, maxScale);
   state.view.scale = scale;
   state.view.x = (rect.width - width * scale) / 2 - bounds.minX * scale;
   state.view.y = (rect.height - height * scale) / 2 - bounds.minY * scale;
-  queueSave();
+  if (persist) queueSave();
   render();
 }
 
@@ -2289,8 +3077,8 @@ function applyView() {
 
 function renderAssets() {
   els.assetGrid.dataset.size = assetSizeMode;
-  els.assetSizeBtn.textContent = `Size: ${assetSizeLabel()}`;
-  els.assetSizeBtn.setAttribute("aria-label", `Asset card size ${assetSizeMode}`);
+  els.assetSizeBtn.textContent = `尺寸：${assetSizeLabel()}`;
+  els.assetSizeBtn.setAttribute("aria-label", `资源卡片尺寸 ${assetSizeMode}`);
   renderAssetTypeFilters();
   const filtered = state.assets.filter((asset) => {
     if (!assetFilters.showArchived && asset.archived) return false;
@@ -2300,7 +3088,7 @@ function renderAssets() {
     const haystack = `${asset.name} ${asset.tags} ${asset.notes || ""}`.toLowerCase();
     return !assetFilters.search || haystack.includes(assetFilters.search);
   });
-  els.assetCount.textContent = `${filtered.length} item${filtered.length === 1 ? "" : "s"}`;
+  els.assetCount.textContent = `${filtered.length} 项资源`;
   els.assetGrid.innerHTML = filtered
     .map((asset) => {
       const media = renderAssetMedia(asset, "asset-thumb");
@@ -2309,10 +3097,10 @@ function renderAssets() {
           ${media}
           <div class="asset-meta">
             <span class="asset-name" title="${esc(asset.name)}">${esc(asset.name)}</span>
-            <button class="mini-button ${asset.favorite ? "is-on" : ""}" type="button" data-asset-action="favorite" title="Mark as favorite" data-tip="Mark as favorite">F</button>
-            <button class="mini-button" type="button" data-asset-action="add" title="Add to canvas" data-tip="Add to canvas">+</button>
-            <button class="mini-button ${asset.inbox ? "is-on" : ""}" type="button" data-asset-action="inbox" title="${asset.inbox ? "Mark sorted" : "Send to inbox"}" data-tip="${asset.inbox ? "Mark sorted" : "Send to inbox"}">IN</button>
-            <button class="mini-button ${asset.archived ? "is-on" : ""}" type="button" data-asset-action="archive" title="Archive asset" data-tip="Archive asset">A</button>
+            <button class="mini-button ${asset.favorite ? "is-on" : ""}" type="button" data-asset-action="favorite" title="标记收藏" data-tip="标记收藏">★</button>
+            <button class="mini-button" type="button" data-asset-action="add" title="添加到画布" data-tip="添加到画布">+</button>
+            <button class="mini-button ${asset.inbox ? "is-on" : ""}" type="button" data-asset-action="inbox" title="${asset.inbox ? "标记已整理" : "放入收件箱"}" data-tip="${asset.inbox ? "标记已整理" : "放入收件箱"}">收</button>
+            <button class="mini-button ${asset.archived ? "is-on" : ""}" type="button" data-asset-action="archive" title="归档资源" data-tip="归档资源">归</button>
           </div>
         </article>
       `;
@@ -2332,13 +3120,13 @@ function assetMatchesTypeFilter(asset, filterType = "all") {
   if (filterType === "all") return true;
   const haystack = `${asset.name || ""} ${asset.tags || ""} ${asset.notes || ""} ${asset.type || ""}`.toLowerCase();
   if (filterType === "storyboard") {
-    return asset.type === "image" && !haystack.includes("style-reference") && !haystack.includes("music") && !haystack.includes("audio");
+    return asset.type === "image" && !haystack.includes("style-reference") && !haystack.includes("music") && !haystack.includes("audio") && !haystack.includes("风格") && !haystack.includes("音乐") && !haystack.includes("声音");
   }
   if (filterType === "video") {
-    return asset.type === "video" || haystack.includes("video generation") || haystack.includes("generated video") || haystack.includes("render");
+    return asset.type === "video" || haystack.includes("video generation") || haystack.includes("generated video") || haystack.includes("render") || haystack.includes("视频") || haystack.includes("生成");
   }
   if (filterType === "music") {
-    return asset.type === "audio" || asset.type === "music-link" || haystack.includes("music") || haystack.includes("audio");
+    return asset.type === "audio" || asset.type === "music-link" || haystack.includes("music") || haystack.includes("audio") || haystack.includes("音乐") || haystack.includes("声音") || haystack.includes("音频");
   }
   if (filterType === "style") {
     return (
@@ -2347,8 +3135,11 @@ function assetMatchesTypeFilter(asset, filterType = "all") {
       haystack.includes("style") ||
       haystack.includes("tone") ||
       haystack.includes("visual reference") ||
-      haystack.includes("video-reference")
-    ) && asset.type !== "music-link" && !haystack.includes("music");
+      haystack.includes("video-reference") ||
+      haystack.includes("风格") ||
+      haystack.includes("调性") ||
+      haystack.includes("影像参考")
+    ) && asset.type !== "music-link" && !haystack.includes("music") && !haystack.includes("音乐") && !haystack.includes("声音");
   }
   return true;
 }
@@ -2360,8 +3151,12 @@ function renderNodes() {
 function renderNode(node) {
   const classes = [
     "canvas-node",
+    `module-${moduleColorKey(node)}`,
     isNodeSelected(node.id) ? "is-selected" : "",
     node.type === "section" ? "is-section-node" : "",
+    node.type === "scene" ? "is-scene-node" : "",
+    node.type === "shot" ? "is-shot-node" : "",
+    isWorkflowNode(node) ? "is-workflow-node" : "",
     node.type === "placeholder" ? "is-placeholder-node" : "",
     node.type === "inspiration" ? "is-inspiration-node" : "",
     canvasSearch && nodeMatchesCanvasSearch(node) ? "is-search-match" : "",
@@ -2371,8 +3166,8 @@ function renderNode(node) {
     .join(" ");
   return `
     <article class="${classes}" data-node-id="${node.id}" style="--node-width:${node.w}px; --node-height:${node.h}px; transform: translate(${node.x}px, ${node.y}px);">
-      <button class="connect-handle connect-left" type="button" data-connection-handle="source" data-side="left" title="Drag from this left dot to connect cards" data-tip="Drag from this left dot to connect cards" aria-label="Connect from left side"></button>
-      <button class="connect-handle connect-right" type="button" data-connection-handle="source" data-side="right" title="Drag from this right dot to connect cards" data-tip="Drag from this right dot to connect cards" aria-label="Connect from right side"></button>
+      <button class="connect-handle connect-left" type="button" data-connection-handle="source" data-side="left" title="从左侧圆点拖出连接卡片" data-tip="从左侧圆点拖出连接卡片" aria-label="从左侧连接"></button>
+      <button class="connect-handle connect-right" type="button" data-connection-handle="source" data-side="right" title="从右侧圆点拖出连接卡片" data-tip="从右侧圆点拖出连接卡片" aria-label="从右侧连接"></button>
       <header class="node-head">
         <span class="node-title">${esc(node.title)}</span>
         ${node.shotOrderLabel ? `<span class="node-order-badge">${esc(node.shotOrderLabel)}</span>` : ""}
@@ -2386,18 +3181,18 @@ function renderNode(node) {
 function shortKind(type) {
   return {
     workflow: "I2V",
-    imageWorkflow: "TXT2IMG",
-    shot: "SHOT",
-    character: "CHAR",
-    scene: "SCENE",
-    section: "GROUP",
-    placeholder: "NEED",
-    inspiration: "IDEA",
-    styleRef: "STYLE",
-    musicRef: "MUSIC",
-    note: "NOTE",
-    media: "MEDIA",
-  }[type] || "NODE";
+    imageWorkflow: "生图",
+    shot: "镜头",
+    character: "角色",
+    scene: "场景",
+    section: "模块",
+    placeholder: "待补",
+    inspiration: "灵感",
+    styleRef: "风格",
+    musicRef: "声音",
+    note: "备注",
+    media: "素材",
+  }[type] || "卡片";
 }
 
 function renderNodeBody(node) {
@@ -2406,11 +3201,11 @@ function renderNodeBody(node) {
     const children = nodesInsideSection(node);
     return `
       <div class="section-summary">
-        <p class="node-note">${esc(node.overallPrompt || node.notes || "Frame related shots, prompts, references, and missing pieces here.")}</p>
+        <p class="node-note">${esc(node.overallPrompt || node.notes || "把相关镜头、提示词、参考和待补项集中在这个模块里。")}</p>
         <div class="status-row">
-          <span class="status-pill ${esc(node.status)}">${esc(node.status || "draft")}</span>
-          <span class="tag">${children.length} card${children.length === 1 ? "" : "s"}</span>
-          <span class="tag">${ready.done}/${ready.total} ready</span>
+          <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status))}</span>
+          <span class="tag">${children.length} 张卡片</span>
+          <span class="tag">${ready.done}/${ready.total} 已就绪</span>
         </div>
       </div>
     `;
@@ -2419,11 +3214,11 @@ function renderNodeBody(node) {
     const ready = readinessForNode(node);
     return `
       <div class="placeholder-card">
-        <strong>${esc(node.neededFor || "Needed")}</strong>
-        <p class="node-note">${esc(node.prompt || node.notes || "Describe the missing asset, prompt, reference, or audio here.")}</p>
+        <strong>${esc(needLabel(node.neededFor))}</strong>
+        <p class="node-note">${esc(node.prompt || node.notes || "描述还缺少的素材、提示词、参考、声音或审批。")}</p>
         <div class="status-row">
-          <span class="status-pill ${esc(node.status)}">${esc(node.status || "blocked")}</span>
-          <span class="tag">${ready.done}/${ready.total} resolved</span>
+          <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status || "blocked"))}</span>
+          <span class="tag">${ready.done}/${ready.total} 已解决</span>
         </div>
       </div>
     `;
@@ -2431,9 +3226,35 @@ function renderNodeBody(node) {
   if (node.type === "inspiration") {
     return `
       <div class="inspiration-card">
-        <p class="node-note">${esc(node.prompt || node.stylePrompt || node.overallPrompt || node.notes || "Drop a reusable prompt fragment, camera idea, edit note, or tone reference.")}</p>
+        <p class="node-note">${esc(node.prompt || node.stylePrompt || node.overallPrompt || node.notes || "放入可复用提示词、镜头想法、剪辑备注或调性参考。")}</p>
         <div class="status-row">
-          <span class="status-pill ${esc(node.status)}">${esc(node.status || "ready")}</span>
+          <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status || "ready"))}</span>
+          ${node.tags ? node.tags.split(",").slice(0, 3).map((tag) => `<span class="tag">${esc(tag.trim())}</span>`).join("") : ""}
+        </div>
+      </div>
+    `;
+  }
+  if (node.type === "shot") {
+    const meta = [
+      ["景别", node.shotSize],
+      ["机位", node.cameraAngle],
+      ["运动", node.cameraMovement],
+      ["地点", node.location],
+      ["镜头感", node.lensFeel],
+      ["优先级", node.priority],
+    ].filter(([, value]) => value);
+    return `
+      <div class="shot-node-summary">
+        <div class="shot-node-focus">
+          <span>叙事目的</span>
+          <p>${esc(node.overallPrompt || node.subjectAction || node.prompt || "描述这个镜头的叙事目的、动作和画面重点。")}</p>
+        </div>
+        ${node.subjectAction ? `<p class="shot-node-action">动作：${esc(node.subjectAction)}</p>` : ""}
+        <div class="shot-node-meta">
+          ${meta.map(([label, value]) => `<span><b>${esc(label)}</b>${esc(value)}</span>`).join("")}
+        </div>
+        <div class="status-row">
+          <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status || "draft"))}</span>
           ${node.tags ? node.tags.split(",").slice(0, 3).map((tag) => `<span class="tag">${esc(tag.trim())}</span>`).join("") : ""}
         </div>
       </div>
@@ -2441,12 +3262,12 @@ function renderNodeBody(node) {
   }
   if (node.type === "media") {
     const asset = assetById(node.assetId);
-    if (!asset) return `<p class="node-note">Missing media</p>`;
+    if (!asset) return `<p class="node-note">素材缺失</p>`;
     const meta = [node.globalShotOrder ? `#${node.globalShotOrder}` : "", node.shotSize, node.cameraMovement, node.lensFeel].filter(Boolean).join(" / ");
     return `
       ${renderAssetMedia(asset, "node-media")}
       <div class="shot-card-summary">
-        <strong>${esc(node.shotBeatTitle || node.shotOrderLabel || "Shot")}</strong>
+        <strong>${esc(node.shotBeatTitle || node.shotOrderLabel || "镜头")}</strong>
         ${meta ? `<span>${esc(meta)}</span>` : ""}
       </div>
       <p class="node-note compact-note">${esc(node.subjectAction || node.notes || asset.tags || asset.name)}</p>
@@ -2458,11 +3279,11 @@ function renderNodeBody(node) {
       ${asset ? renderAssetMedia(asset, "node-media") : ""}
       ${node.referenceUrl ? renderReferenceUrl(node.referenceUrl, node.type) : ""}
       <div class="status-row">
-        <span class="status-pill ${esc(node.status)}">${esc(node.status || "draft")}</span>
+        <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status || "draft"))}</span>
         ${node.tags ? node.tags.split(",").slice(0, 3).map((tag) => `<span class="tag">${esc(tag.trim())}</span>`).join("") : ""}
         ${node.influenceUse ? `<span class="tag">${esc(node.influenceUse)}</span>` : ""}
       </div>
-      <p class="node-note">${esc(node.stylePrompt || node.musicPrompt || node.notes || "Add a link or upload a reference file from the inspector.")}</p>
+      <p class="node-note">${esc(node.stylePrompt || node.musicPrompt || node.notes || "在检查器里添加链接或上传参考文件。")}</p>
     `;
   }
   if (isWorkflowNode(node)) {
@@ -2471,44 +3292,44 @@ function renderNodeBody(node) {
     return `
       <div class="workflow-summary">
         <div class="workflow-strip">
-          ${start ? renderAssetMedia(start, "workflow-frame") : `<div class="placeholder-frame">Start</div>`}
+          ${start ? renderAssetMedia(start, "workflow-frame") : `<div class="placeholder-frame">起始帧</div>`}
           <span class="workflow-arrow">-&gt;</span>
-          ${end ? renderAssetMedia(end, "workflow-frame") : `<div class="placeholder-frame">End</div>`}
+          ${end ? renderAssetMedia(end, "workflow-frame") : `<div class="placeholder-frame">结束帧</div>`}
         </div>
         <div class="status-row">
-          <span class="status-pill ${esc(node.status)}">${esc(node.status || "draft")}</span>
-          <span class="tag">${esc(node.model || "Model")}</span>
+          <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status || "draft"))}</span>
+          <span class="tag">${esc(node.model || "模型")}</span>
           <span class="tag">${esc(node.duration || node.resolution || "")}</span>
           ${node.priority && node.priority !== "normal" ? `<span class="tag">${esc(node.priority)}</span>` : ""}
-          ${(node.attempts || []).some((attempt) => attempt.status === "winner") ? `<span class="tag">winner logged</span>` : ""}
+          ${(node.attempts || []).some((attempt) => attempt.status === "winner") ? `<span class="tag">已有最终版</span>` : ""}
         </div>
-        <p class="node-note">${esc(node.prompt || node.subjectAction || node.notes || "Prompt pending")}</p>
+        <p class="node-note">${esc(node.prompt || node.subjectAction || node.notes || "待填写提示词")}</p>
       </div>
     `;
   }
   return `
     <div class="status-row">
-      <span class="status-pill ${esc(node.status)}">${esc(node.status || "draft")}</span>
+      <span class="status-pill ${esc(node.status)}">${esc(statusLabel(node.status || "draft"))}</span>
       ${node.tags ? node.tags.split(",").slice(0, 3).map((tag) => `<span class="tag">${esc(tag.trim())}</span>`).join("") : ""}
       ${node.shotSize ? `<span class="tag">${esc(node.shotSize)}</span>` : ""}
       ${node.reviewDecision ? `<span class="tag">${esc(node.reviewDecision)}</span>` : ""}
     </div>
-    <p class="node-note">${esc(node.overallPrompt || node.stylePrompt || node.musicPrompt || node.prompt || node.notes || "No notes yet.")}</p>
+    <p class="node-note">${esc(node.overallPrompt || node.stylePrompt || node.musicPrompt || node.prompt || node.notes || "暂无备注。")}</p>
   `;
 }
 
 function renderReferenceUrl(url, type) {
-  const label = type === "musicRef" ? "Music URL" : "Video URL";
+  const label = type === "musicRef" ? "声音链接" : "影像链接";
   return `<a class="node-media asset-placeholder link-placeholder reference-url-card" href="${esc(url)}" target="_blank" rel="noreferrer"><strong>${label}</strong><span>${esc(url)}</span></a>`;
 }
 
 function renderAssetMedia(asset, className) {
   if (asset.type === "video") return `<video class="${className}" src="${asset.dataUrl}" muted playsinline controls></video>`;
   if (asset.type === "audio") {
-    return `<div class="${className} asset-placeholder audio-placeholder"><strong>Audio</strong><span>${esc(asset.name)}</span><audio src="${asset.dataUrl}" controls></audio></div>`;
+    return `<div class="${className} asset-placeholder audio-placeholder"><strong>音频</strong><span>${esc(asset.name)}</span><audio src="${asset.dataUrl}" controls></audio></div>`;
   }
   if (asset.type === "video-link" || asset.type === "music-link" || asset.type === "reference-link") {
-    const label = asset.type === "video-link" ? "Video Ref" : asset.type === "music-link" ? "Music Ref" : "Reference";
+    const label = asset.type === "video-link" ? "影像参考" : asset.type === "music-link" ? "声音参考" : "参考";
     return `<a class="${className} asset-placeholder link-placeholder" href="${esc(asset.externalUrl)}" target="_blank" rel="noreferrer"><strong>${label}</strong><span>${esc(asset.name)}</span><small>${esc(asset.externalUrl)}</small></a>`;
   }
   return `<img class="${className}" src="${asset.dataUrl}" alt="${esc(asset.name)}" />`;
@@ -2646,12 +3467,12 @@ function renderInspector() {
     <section class="inspector-empty">
       <div class="inspector-head">
         <div>
-          <h2>Board</h2>
-          <p>${state.nodes.length} nodes, ${state.assets.length} assets</p>
+          <h2>画布总览</h2>
+          <p>${state.nodes.length} 张卡片，${state.assets.length} 项资源</p>
         </div>
-        <button class="icon-button" type="button" data-action="close-inspector" title="Close inspector" data-tip="Close inspector" aria-label="Close inspector">X</button>
+        <button class="icon-button" type="button" data-action="close-inspector" title="关闭检查器" data-tip="关闭检查器" aria-label="关闭检查器">X</button>
       </div>
-      <button class="button primary" type="button" data-action="workflow-from-asset">Create Workflow</button>
+      <button class="button primary" type="button" data-action="workflow-from-asset">从资源创建工作流</button>
     </section>
   `;
 }
@@ -2661,22 +3482,22 @@ function renderMultiNodeInspector(ids) {
     <section class="inspector-section">
       <div class="panel-head inspector-head">
         <div>
-          <h2>${ids.length} Cards Selected</h2>
-          <span>Drag any selected card to move the group.</span>
+          <h2>已选 ${ids.length} 张卡片</h2>
+          <span>拖动任意选中卡片即可整体移动。</span>
         </div>
         <div class="inspector-actions">
-          <button class="icon-button" type="button" data-action="close-inspector" title="Close inspector" data-tip="Close inspector" aria-label="Close inspector">-</button>
-          <button class="icon-button danger" type="button" data-action="delete-node" title="Delete selected cards" data-tip="Delete selected cards" aria-label="Delete selected cards">X</button>
+          <button class="icon-button" type="button" data-action="close-inspector" title="关闭检查器" data-tip="关闭检查器" aria-label="关闭检查器">-</button>
+          <button class="icon-button danger" type="button" data-action="delete-node" title="删除选中卡片" data-tip="删除选中卡片" aria-label="删除选中卡片">X</button>
         </div>
       </div>
-      <p class="help-text">Selected cards: ${ids.map((id) => nodeById(id)?.title || id).map(esc).join(", ")}</p>
+      <p class="help-text">选中卡片：${ids.map((id) => nodeById(id)?.title || id).map(esc).join(", ")}</p>
     </section>
   `;
 }
 
 function renderNodeInspector(node) {
   const typeOptions = ["draft", "ready", "review", "approved", "blocked"]
-    .map((status) => `<option value="${status}" ${node.status === status ? "selected" : ""}>${status}</option>`)
+    .map((status) => `<option value="${status}" ${node.status === status ? "selected" : ""}>${statusLabel(status)}</option>`)
     .join("");
   return `
     <section class="inspector-section">
@@ -2686,22 +3507,22 @@ function renderNodeInspector(node) {
           <span>${esc(node.id)}</span>
         </div>
         <div class="inspector-actions">
-          <button class="icon-button" type="button" data-action="close-inspector" title="Close inspector" data-tip="Close inspector" aria-label="Close inspector">-</button>
-          <button class="icon-button danger" type="button" data-action="delete-node" title="Delete this card" data-tip="Delete this card" aria-label="Delete">X</button>
+          <button class="icon-button" type="button" data-action="close-inspector" title="关闭检查器" data-tip="关闭检查器" aria-label="关闭检查器">-</button>
+          <button class="icon-button danger" type="button" data-action="delete-node" title="删除这张卡片" data-tip="删除这张卡片" aria-label="删除">X</button>
         </div>
       </div>
       <div class="field">
-        <label>Title</label>
+        <label>标题</label>
         <input data-field="title" value="${esc(node.title)}" />
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Status</label>
+          <label>状态</label>
           <select data-field="status">${typeOptions}</select>
         </div>
         <div class="field">
-          <label>Tags</label>
-          <input data-field="tags" value="${esc(node.tags)}" placeholder="shot, hero, v1" />
+          <label>标签</label>
+          <input data-field="tags" value="${esc(node.tags)}" placeholder="镜头, 重点, v1" />
         </div>
       </div>
     </section>
@@ -2712,10 +3533,10 @@ function renderNodeInspector(node) {
     ${renderReviewPanel(node)}
     <section class="inspector-section">
       <div class="field">
-        <label>Notes</label>
+        <label>备注</label>
         <textarea data-field="notes">${esc(node.notes)}</textarea>
       </div>
-      <button class="button" type="button" data-action="duplicate-node" title="Duplicate this card" data-tip="Duplicate this card">Duplicate</button>
+      <button class="button" type="button" data-action="duplicate-node" title="复制这张卡片" data-tip="复制这张卡片">复制</button>
     </section>
   `;
 }
@@ -2724,13 +3545,13 @@ function renderReadinessPanel(node) {
   const ready = readinessForNode(node);
   return `
     <section class="inspector-section readiness-panel">
-      <h3>Handoff Readiness</h3>
+      <h3>交付就绪度</h3>
       <div class="readiness-meter" style="--ready:${ready.total ? ready.done / ready.total : 0}">
         <span></span>
       </div>
       <ul class="readiness-list">
         ${ready.items
-          .map((item) => `<li class="${item.pass ? "is-done" : "is-missing"}">${item.pass ? "OK" : "Need"} ${esc(item.label)}</li>`)
+          .map((item) => `<li class="${item.pass ? "is-done" : "is-missing"}">${item.pass ? "完成" : "待补"} ${esc(item.label)}</li>`)
           .join("")}
       </ul>
     </section>
@@ -2740,22 +3561,29 @@ function renderReadinessPanel(node) {
 function renderReviewPanel(node) {
   return `
     <section class="inspector-section">
-      <h3>Review Notes</h3>
+      <h3>审阅备注</h3>
       <div class="field-row">
         <div class="field">
-          <label>Owner</label>
-          <input data-field="reviewOwner" value="${esc(node.reviewOwner || "")}" placeholder="me, editor, client" />
+          <label>负责人</label>
+          <input data-field="reviewOwner" value="${esc(node.reviewOwner || "")}" placeholder="我, 剪辑, 导演, 客户" />
         </div>
         <div class="field">
-          <label>Decision</label>
+          <label>决定</label>
           <select data-field="reviewDecision">
-            ${["", "needs review", "revise", "approved", "hold", "regenerate"].map((value) => `<option value="${value}" ${(node.reviewDecision || "") === value ? "selected" : ""}>${value || "none"}</option>`).join("")}
+            ${[
+              ["", "无"],
+              ["needs review", "待审"],
+              ["revise", "需修改"],
+              ["approved", "已通过"],
+              ["hold", "暂缓"],
+              ["regenerate", "重生成"],
+            ].map(([value, label]) => `<option value="${value}" ${(node.reviewDecision || "") === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
       </div>
       <div class="field">
-        <label>Notes</label>
-        <textarea data-field="reviewNotes" placeholder="Client/editor comments, decisions, and next actions.">${esc(node.reviewNotes || "")}</textarea>
+        <label>备注</label>
+        <textarea data-field="reviewNotes" placeholder="导演 / 剪辑 / 客户意见、决定和下一步动作。">${esc(node.reviewNotes || "")}</textarea>
       </div>
     </section>
   `;
@@ -2765,37 +3593,37 @@ function renderAttemptsPanel(node) {
   const attempts = Array.isArray(node.attempts) ? node.attempts : [];
   return `
     <section class="inspector-section">
-      <h3>Generation Attempts</h3>
+      <h3>生成尝试</h3>
       <div class="field-row">
         <div class="field">
-          <label>Label</label>
-          <input data-attempt-field="label" placeholder="v1, v2, Runway test" />
+          <label>标签</label>
+          <input data-attempt-field="label" placeholder="v1, v2, 可灵测试" />
         </div>
         <div class="field">
-          <label>Status</label>
+          <label>状态</label>
           <select data-attempt-field="status">
-            <option value="candidate">candidate</option>
-            <option value="winner">winner</option>
-            <option value="rejected">rejected</option>
-            <option value="needs revision">needs revision</option>
+            <option value="candidate">候选</option>
+            <option value="winner">最终版</option>
+            <option value="rejected">废弃</option>
+            <option value="needs revision">需修改</option>
           </select>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Output URL</label>
+          <label>输出链接</label>
           <input data-attempt-field="outputUrl" placeholder="https://..." />
         </div>
         <div class="field">
-          <label>Seed / Settings</label>
+          <label>Seed / 设置</label>
           <input data-attempt-field="seed" placeholder="seed, cfg, motion strength" />
         </div>
       </div>
       <div class="field">
-        <label>Attempt Notes</label>
-        <textarea data-attempt-field="notes" placeholder="What worked, what failed, what to change next."></textarea>
+        <label>尝试备注</label>
+        <textarea data-attempt-field="notes" placeholder="哪里有效、哪里失败、下一版要改什么。"></textarea>
       </div>
-      <button class="button primary" type="button" data-action="add-attempt">Add Attempt</button>
+      <button class="button primary" type="button" data-action="add-attempt">记录尝试</button>
       <div class="attempt-list">
         ${
           attempts.length
@@ -2804,20 +3632,20 @@ function renderAttemptsPanel(node) {
                   (attempt) => `
                     <article class="attempt-row">
                       <div>
-                        <strong>${esc(attempt.label || "Attempt")}</strong>
-                        <span>${esc(attempt.status || "candidate")}${attempt.seed ? ` / ${esc(attempt.seed)}` : ""}</span>
+                        <strong>${esc(attempt.label || "生成尝试")}</strong>
+                        <span>${esc(statusLabel(attempt.status || "candidate"))}${attempt.seed ? ` / ${esc(attempt.seed)}` : ""}</span>
                         ${attempt.outputUrl ? `<a href="${esc(attempt.outputUrl)}" target="_blank" rel="noreferrer">${esc(attempt.outputUrl)}</a>` : ""}
                         ${attempt.notes ? `<p>${esc(attempt.notes)}</p>` : ""}
                       </div>
                       <div class="version-actions">
-                        <button class="button compact" type="button" data-action="mark-attempt-winner" data-attempt-id="${attempt.id}">Winner</button>
-                        <button class="button compact" type="button" data-action="delete-attempt" data-attempt-id="${attempt.id}">Delete</button>
+                        <button class="button compact" type="button" data-action="mark-attempt-winner" data-attempt-id="${attempt.id}">设为最终</button>
+                        <button class="button compact" type="button" data-action="delete-attempt" data-attempt-id="${attempt.id}">删除</button>
                       </div>
                     </article>
                   `,
                 )
                 .join("")
-            : `<p class="help-text">No generation outputs logged yet.</p>`
+            : `<p class="help-text">还没有记录生成输出。</p>`
         }
       </div>
     </section>
@@ -2827,11 +3655,11 @@ function renderAttemptsPanel(node) {
 function renderConnectionFields(node) {
   return `
     <section class="inspector-section">
-      <h3>Connection</h3>
+      <h3>连接关系</h3>
       <div class="field">
-        <label>Source Card</label>
+        <label>来源卡片</label>
         <select data-field="sourceNodeId">
-          <option value="">None</option>
+          <option value="">无</option>
           ${state.nodes
             .filter((item) => item.id !== node.id)
             .map((item) => `<option value="${item.id}" ${node.sourceNodeId === item.id ? "selected" : ""}>${esc(item.title)}</option>`)
@@ -2840,15 +3668,15 @@ function renderConnectionFields(node) {
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Source Side</label>
+          <label>来源侧</label>
           <select data-field="linkSourceSide">
-            ${["left", "right"].map((side) => `<option value="${side}" ${(node.linkSourceSide || "right") === side ? "selected" : ""}>${side}</option>`).join("")}
+            ${[["left", "左"], ["right", "右"]].map(([side, label]) => `<option value="${side}" ${(node.linkSourceSide || "right") === side ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
         <div class="field">
-          <label>This Card Side</label>
+          <label>本卡侧</label>
           <select data-field="linkTargetSide">
-            ${["left", "right"].map((side) => `<option value="${side}" ${(node.linkTargetSide || "left") === side ? "selected" : ""}>${side}</option>`).join("")}
+            ${[["left", "左"], ["right", "右"]].map(([side, label]) => `<option value="${side}" ${(node.linkTargetSide || "left") === side ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -2860,13 +3688,13 @@ function renderPromptFields(node) {
   if (node.type === "media") {
     return `
       <section class="inspector-section">
-        <h3>Image / Reference Prompt</h3>
+        <h3>图片 / 参考提示词</h3>
         <div class="field">
-          <label>Prompt For This Asset</label>
-          <textarea data-field="prompt" placeholder="Prompt, motion instruction, style notes, or audio direction for this specific asset.">${esc(node.prompt)}</textarea>
+          <label>此素材提示词</label>
+          <textarea data-field="prompt" placeholder="此素材对应的画面、动作、风格或声音说明。">${esc(node.prompt)}</textarea>
         </div>
         <div class="field">
-          <label>Negative Prompt</label>
+          <label>负面提示词</label>
           <textarea data-field="negativePrompt">${esc(node.negativePrompt)}</textarea>
         </div>
       </section>
@@ -2876,18 +3704,18 @@ function renderPromptFields(node) {
     return `
       ${node.type === "section" ? "" : renderShotMetadataFields(node)}
       <section class="inspector-section">
-        <h3>${node.type === "section" ? "Section Plan" : "Scene Prompt"}</h3>
+        <h3>${node.type === "section" ? "模块规划" : "场景提示词"}</h3>
         <div class="field">
-          <label>${node.type === "section" ? "Section Description" : "Overall Scene Description"}</label>
-          <textarea data-field="overallPrompt" placeholder="What should this whole scene feel like? Include story action, tone, camera, character continuity, and visual priorities.">${esc(node.overallPrompt)}</textarea>
+          <label>${node.type === "section" ? "模块说明" : "整体场景描述"}</label>
+          <textarea data-field="overallPrompt" placeholder="这个场景/模块应该是什么感觉？包括故事动作、调性、摄影、角色连续性和视觉优先级。">${esc(node.overallPrompt)}</textarea>
         </div>
         <div class="field">
-          <label>Style Direction</label>
-          <textarea data-field="stylePrompt" placeholder="Reference style, lighting, color, lens, pacing, or editing language.">${esc(node.stylePrompt)}</textarea>
+          <label>风格方向</label>
+          <textarea data-field="stylePrompt" placeholder="参考风格、灯光、色彩、镜头、节奏或剪辑语言。">${esc(node.stylePrompt)}</textarea>
         </div>
         <div class="field">
-          <label>Music / Sound Direction</label>
-          <textarea data-field="musicPrompt" placeholder="Music mood, tempo, instruments, references, or audio notes for this scene.">${esc(node.musicPrompt)}</textarea>
+          <label>音乐 / 声音方向</label>
+          <textarea data-field="musicPrompt" placeholder="音乐情绪、速度、乐器、参考或本场声音备注。">${esc(node.musicPrompt)}</textarea>
         </div>
       </section>
     `;
@@ -2895,22 +3723,22 @@ function renderPromptFields(node) {
   if (node.type === "placeholder") {
     return `
       <section class="inspector-section">
-        <h3>Missing Piece</h3>
+        <h3>待补项</h3>
         <div class="field-row">
           <div class="field">
-            <label>Needed For</label>
+            <label>需要补什么</label>
             <select data-field="neededFor">
-              ${["image", "video", "music", "sound", "style", "text", "approval"].map((value) => `<option value="${value}" ${node.neededFor === value ? "selected" : ""}>${value}</option>`).join("")}
+              ${["image", "video", "music", "sound", "style", "text", "approval"].map((value) => `<option value="${value}" ${node.neededFor === value ? "selected" : ""}>${needLabel(value)}</option>`).join("")}
             </select>
           </div>
           <div class="field">
-            <label>Resolved By Asset</label>
-            <select data-field="referenceAssetId">${assetOptions(node.referenceAssetId, "None")}</select>
+            <label>由资源解决</label>
+            <select data-field="referenceAssetId">${assetOptions(node.referenceAssetId, "无")}</select>
           </div>
         </div>
         <div class="field">
-          <label>Needed Prompt / Brief</label>
-          <textarea data-field="prompt" placeholder="Describe the missing image, clip, reference, music, sound, or decision.">${esc(node.prompt)}</textarea>
+          <label>需求简报 / 提示词</label>
+          <textarea data-field="prompt" placeholder="描述缺少的图片、片段、参考、音乐、声音或决策。">${esc(node.prompt)}</textarea>
         </div>
       </section>
     `;
@@ -2918,14 +3746,14 @@ function renderPromptFields(node) {
   if (node.type === "inspiration") {
     return `
       <section class="inspector-section">
-        <h3>Inspiration</h3>
+        <h3>灵感</h3>
         <div class="field">
-          <label>Prompt Fragment / Idea</label>
-          <textarea data-field="prompt" placeholder="Reusable wording, camera language, pacing note, palette note, or tone idea.">${esc(node.prompt)}</textarea>
+          <label>提示词片段 / 想法</label>
+          <textarea data-field="prompt" placeholder="可复用措辞、摄影语言、节奏备注、色彩或调性想法。">${esc(node.prompt)}</textarea>
         </div>
         <div class="field">
-          <label>Style Direction</label>
-          <textarea data-field="stylePrompt" placeholder="Optional style interpretation for this idea.">${esc(node.stylePrompt)}</textarea>
+          <label>风格方向</label>
+          <textarea data-field="stylePrompt" placeholder="这个想法可延展出的风格说明。">${esc(node.stylePrompt)}</textarea>
         </div>
       </section>
     `;
@@ -2933,21 +3761,21 @@ function renderPromptFields(node) {
   if (node.type === "styleRef" || node.type === "musicRef") {
     return `
       <section class="inspector-section">
-        <h3>${node.type === "styleRef" ? "Style Reference" : "Music Reference"}</h3>
+        <h3>${node.type === "styleRef" ? "影像风格参考" : "音乐 / 声音参考"}</h3>
         <div class="field">
-          <label>${node.type === "styleRef" ? "Video / Style URL" : "Music / Audio URL"}</label>
+          <label>${node.type === "styleRef" ? "影像 / 风格链接" : "音乐 / 声音链接"}</label>
           <input data-field="referenceUrl" value="${esc(node.referenceUrl || "")}" placeholder="${node.type === "styleRef" ? "https://video-reference..." : "https://music-reference..."}" />
         </div>
         <div class="field">
-          <label>Attached File / Asset</label>
+          <label>关联文件 / 资源</label>
           <select data-field="referenceAssetId">${referenceAssetOptions(node)}</select>
         </div>
-        <button class="button" type="button" data-action="upload-reference-file" title="Upload a file directly to this card" data-tip="Upload a file directly to this card">${node.type === "styleRef" ? "Upload Video/Image" : "Upload Music/Audio"}</button>
+        <button class="button" type="button" data-action="upload-reference-file" title="上传文件到这张卡片" data-tip="上传文件到这张卡片">${node.type === "styleRef" ? "上传视频/图片" : "上传音乐/音频"}</button>
       </section>
       <section class="inspector-section">
-        <h3>${node.type === "styleRef" ? "Style Direction" : "Music Direction"}</h3>
+        <h3>${node.type === "styleRef" ? "风格方向" : "音乐 / 声音方向"}</h3>
         <div class="field">
-          <label>${node.type === "styleRef" ? "Style / Tone Prompt" : "Music / Audio Prompt"}</label>
+          <label>${node.type === "styleRef" ? "风格 / 调性提示词" : "音乐 / 声音提示词"}</label>
           <textarea data-field="${node.type === "styleRef" ? "stylePrompt" : "musicPrompt"}">${esc(node.type === "styleRef" ? node.stylePrompt : node.musicPrompt)}</textarea>
         </div>
       </section>
@@ -2960,55 +3788,72 @@ function renderPromptFields(node) {
 function renderShotMetadataFields(node) {
   return `
     <section class="inspector-section">
-      <h3>Shot Metadata</h3>
+      <h3>镜头元数据</h3>
       <div class="field-row">
         <div class="field">
-          <label>Shot Size</label>
+          <label>景别</label>
           <select data-field="shotSize">
-            ${["", "extreme wide", "wide", "medium", "close-up", "extreme close-up", "macro"].map((value) => `<option value="${value}" ${(node.shotSize || "") === value ? "selected" : ""}>${value || "none"}</option>`).join("")}
+            ${[
+              ["", "无"],
+              ["extreme wide", "大全景"],
+              ["wide", "全景"],
+              ["medium", "中景"],
+              ["close-up", "特写"],
+              ["extreme close-up", "大特写"],
+              ["macro", "微距"],
+            ].map(([value, label]) => `<option value="${value}" ${(node.shotSize || "") === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
         <div class="field">
-          <label>Camera Angle</label>
+          <label>机位角度</label>
           <select data-field="cameraAngle">
-            ${["", "eye-level", "low angle", "high angle", "overhead", "dutch angle", "profile", "over-the-shoulder"].map((value) => `<option value="${value}" ${(node.cameraAngle || "") === value ? "selected" : ""}>${value || "none"}</option>`).join("")}
+            ${[
+              ["", "无"],
+              ["eye-level", "平视"],
+              ["low angle", "低角度"],
+              ["high angle", "高角度"],
+              ["overhead", "俯拍"],
+              ["dutch angle", "倾斜构图"],
+              ["profile", "侧面"],
+              ["over-the-shoulder", "过肩"],
+            ].map(([value, label]) => `<option value="${value}" ${(node.cameraAngle || "") === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Camera Movement</label>
-          <input data-field="cameraMovement" value="${esc(node.cameraMovement || "")}" placeholder="push in, orbit, handheld, locked off" />
+          <label>摄影机运动</label>
+          <input data-field="cameraMovement" value="${esc(node.cameraMovement || "")}" placeholder="推近、环绕、手持、固定" />
         </div>
         <div class="field">
-          <label>Priority</label>
+          <label>优先级</label>
           <select data-field="priority">
-            ${["low", "normal", "high", "must-have"].map((value) => `<option value="${value}" ${(node.priority || "normal") === value ? "selected" : ""}>${value}</option>`).join("")}
+            ${[["low", "低"], ["normal", "普通"], ["high", "高"], ["must-have", "必拍"]].map(([value, label]) => `<option value="${value}" ${(node.priority || "normal") === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
       </div>
       <div class="field">
-        <label>Subject Action</label>
-        <input data-field="subjectAction" value="${esc(node.subjectAction || "")}" placeholder="What happens in frame?" />
+        <label>画面动作</label>
+        <input data-field="subjectAction" value="${esc(node.subjectAction || "")}" placeholder="画面中发生什么？" />
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Location</label>
+          <label>地点</label>
           <input data-field="location" value="${esc(node.location || "")}" />
         </div>
         <div class="field">
-          <label>Mood</label>
+          <label>情绪</label>
           <input data-field="mood" value="${esc(node.mood || "")}" />
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Lighting</label>
+          <label>灯光</label>
           <input data-field="lighting" value="${esc(node.lighting || "")}" />
         </div>
         <div class="field">
-          <label>Lens Feel</label>
-          <input data-field="lensFeel" value="${esc(node.lensFeel || "")}" placeholder="macro, anamorphic, long lens" />
+          <label>镜头质感</label>
+          <input data-field="lensFeel" value="${esc(node.lensFeel || "")}" placeholder="微距、变形宽银幕、长焦" />
         </div>
       </div>
     </section>
@@ -3018,40 +3863,40 @@ function renderShotMetadataFields(node) {
 function renderReferenceIntelligenceFields(node) {
   return `
     <section class="inspector-section">
-      <h3>Reference Intelligence</h3>
+      <h3>参考拆解</h3>
       <div class="field">
-        <label>Use This For</label>
-        <input data-field="influenceUse" value="${esc(node.influenceUse || "")}" placeholder="color, pacing, camera, lighting, wardrobe, edit rhythm" />
+        <label>用于影响</label>
+        <input data-field="influenceUse" value="${esc(node.influenceUse || "")}" placeholder="色彩、节奏、摄影、灯光、服装、剪辑律动" />
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Influence Strength</label>
+          <label>影响强度</label>
           <select data-field="influenceStrength">
-            ${["light", "medium", "strong", "exact mood only"].map((value) => `<option value="${value}" ${(node.influenceStrength || "medium") === value ? "selected" : ""}>${value}</option>`).join("")}
+            ${[["light", "轻"], ["medium", "中"], ["strong", "强"], ["exact mood only", "只取情绪"]].map(([value, label]) => `<option value="${value}" ${(node.influenceStrength || "medium") === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
         <div class="field">
-          <label>Color Notes</label>
+          <label>色彩备注</label>
           <input data-field="influenceColor" value="${esc(node.influenceColor || "")}" />
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Pacing Notes</label>
+          <label>节奏备注</label>
           <input data-field="influencePacing" value="${esc(node.influencePacing || "")}" />
         </div>
         <div class="field">
-          <label>Camera Notes</label>
+          <label>摄影备注</label>
           <input data-field="influenceCamera" value="${esc(node.influenceCamera || "")}" />
         </div>
       </div>
       <div class="field">
-        <label>Lighting Notes</label>
+        <label>灯光备注</label>
         <input data-field="influenceLighting" value="${esc(node.influenceLighting || "")}" />
       </div>
       <div class="field">
-        <label>Do Not Copy</label>
-        <textarea data-field="doNotCopy" placeholder="Anything to avoid copying too literally.">${esc(node.doNotCopy || "")}</textarea>
+        <label>不要照搬</label>
+        <textarea data-field="doNotCopy" placeholder="哪些东西不要过度照搬参考。">${esc(node.doNotCopy || "")}</textarea>
       </div>
     </section>
   `;
@@ -3060,7 +3905,7 @@ function renderReferenceIntelligenceFields(node) {
 function referenceAssetOptions(node) {
   const allowedTypes = node.type === "musicRef" ? ["audio", "video"] : ["video", "image"];
   return `
-    <option value="">None</option>
+    <option value="">无</option>
     ${state.assets
       .filter((asset) => !asset.archived && allowedTypes.includes(asset.type))
       .map((asset) => `<option value="${asset.id}" ${node.referenceAssetId === asset.id ? "selected" : ""}>${esc(asset.name)}</option>`)
@@ -3072,26 +3917,26 @@ function renderWorkflowFields(node) {
   return `
     ${renderShotMetadataFields(node)}
     <section class="inspector-section">
-      <h3>Workflow</h3>
+      <h3>工作流</h3>
       <div class="field-row">
         <div class="field">
-          <label>Provider</label>
+          <label>平台 / 工具</label>
           <input data-field="provider" value="${esc(node.provider)}" />
         </div>
         <div class="field">
-          <label>Model</label>
+          <label>模型</label>
           <input data-field="model" value="${esc(node.model)}" />
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Aspect</label>
+          <label>画幅</label>
           <select data-field="aspectRatio">
             ${["16:9", "9:16", "1:1", "4:5", "2.39:1"].map((value) => `<option ${node.aspectRatio === value ? "selected" : ""}>${value}</option>`).join("")}
           </select>
         </div>
         <div class="field">
-          <label>Resolution</label>
+          <label>分辨率</label>
           <select data-field="resolution">
             ${["720p", "1080p", "1440p", "4K"].map((value) => `<option ${node.resolution === value ? "selected" : ""}>${value}</option>`).join("")}
           </select>
@@ -3099,7 +3944,7 @@ function renderWorkflowFields(node) {
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Duration</label>
+          <label>时长</label>
           <select data-field="duration">
             ${["4s", "5s", "6s", "8s", "10s", "12s"].map((value) => `<option ${node.duration === value ? "selected" : ""}>${value}</option>`).join("")}
           </select>
@@ -3110,9 +3955,9 @@ function renderWorkflowFields(node) {
         </div>
       </div>
       <div class="field">
-        <label>Source Node</label>
+        <label>来源卡片</label>
         <select data-field="sourceNodeId">
-          <option value="">None</option>
+          <option value="">无</option>
           ${state.nodes
             .filter((item) => item.id !== node.id)
             .map((item) => `<option value="${item.id}" ${node.sourceNodeId === item.id ? "selected" : ""}>${esc(item.title)}</option>`)
@@ -3121,34 +3966,34 @@ function renderWorkflowFields(node) {
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Source Side</label>
+          <label>来源侧</label>
           <select data-field="linkSourceSide">
-            ${["left", "right"].map((side) => `<option value="${side}" ${(node.linkSourceSide || "right") === side ? "selected" : ""}>${side}</option>`).join("")}
+            ${[["left", "左"], ["right", "右"]].map(([side, label]) => `<option value="${side}" ${(node.linkSourceSide || "right") === side ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
         <div class="field">
-          <label>This Card Side</label>
+          <label>本卡侧</label>
           <select data-field="linkTargetSide">
-            ${["left", "right"].map((side) => `<option value="${side}" ${(node.linkTargetSide || "left") === side ? "selected" : ""}>${side}</option>`).join("")}
+            ${[["left", "左"], ["right", "右"]].map(([side, label]) => `<option value="${side}" ${(node.linkTargetSide || "left") === side ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
       </div>
       <div class="field-row">
         <div class="field">
-          <label>Start Frame</label>
-          <select data-field="startAssetId">${assetOptions(node.startAssetId, "None")}</select>
+          <label>起始帧</label>
+          <select data-field="startAssetId">${assetOptions(node.startAssetId, "无")}</select>
         </div>
         <div class="field">
-          <label>End Frame</label>
-          <select data-field="endAssetId">${assetOptions(node.endAssetId, "Optional")}</select>
+          <label>结束帧</label>
+          <select data-field="endAssetId">${assetOptions(node.endAssetId, "可选")}</select>
         </div>
       </div>
       <div class="field">
-        <label>Prompt</label>
-        <textarea data-field="prompt" placeholder="Describe motion, camera, continuity, and final frame.">${esc(node.prompt)}</textarea>
+        <label>提示词</label>
+        <textarea data-field="prompt" placeholder="描述运动、摄影、连续性和最终画面。">${esc(node.prompt)}</textarea>
       </div>
       <div class="field">
-        <label>Negative Prompt</label>
+        <label>负面提示词</label>
         <textarea data-field="negativePrompt">${esc(node.negativePrompt)}</textarea>
       </div>
     </section>
@@ -3170,14 +4015,14 @@ function renderAssetInspector(asset) {
     <section class="inspector-section">
       <div class="panel-head inspector-head">
         <div>
-          <h2>Asset</h2>
+          <h2>资源</h2>
           <span>${esc(asset.type)} / ${formatBytes(asset.size)}</span>
         </div>
-        <button class="icon-button" type="button" data-action="close-inspector" title="Close inspector" data-tip="Close inspector" aria-label="Close inspector">-</button>
+        <button class="icon-button" type="button" data-action="close-inspector" title="关闭检查器" data-tip="关闭检查器" aria-label="关闭检查器">-</button>
       </div>
       ${renderAssetMedia(asset, "node-media")}
       <div class="field">
-        <label>Name</label>
+        <label>名称</label>
         <input value="${esc(asset.name)}" readonly />
       </div>
       ${asset.externalUrl ? `
@@ -3187,21 +4032,21 @@ function renderAssetInspector(asset) {
         </div>
       ` : ""}
       <div class="field">
-        <label>Tags</label>
+        <label>标签</label>
         <input value="${esc(asset.tags)}" readonly />
       </div>
       <div class="status-row">
-        ${asset.inbox ? `<span class="tag">inbox</span>` : `<span class="tag">sorted</span>`}
-        ${asset.favorite ? `<span class="tag">favorite</span>` : ""}
+        ${asset.inbox ? `<span class="tag">收件箱</span>` : `<span class="tag">已整理</span>`}
+        ${asset.favorite ? `<span class="tag">收藏</span>` : ""}
       </div>
       ${asset.notes ? `
         <div class="field">
-          <label>Reference Notes</label>
+          <label>参考备注</label>
           <textarea readonly>${esc(asset.notes)}</textarea>
         </div>
       ` : ""}
-      <button class="button" type="button" data-action="add-selected-asset" title="Add this asset as a card" data-tip="Add this asset as a card">Add to Canvas</button>
-      <button class="button primary" type="button" data-action="workflow-from-asset" title="Create an image-to-video workflow from this asset" data-tip="Create an image-to-video workflow from this asset">Create Workflow</button>
+      <button class="button" type="button" data-action="add-selected-asset" title="把资源作为卡片加入画布" data-tip="把资源作为卡片加入画布">添加到画布</button>
+      <button class="button primary" type="button" data-action="workflow-from-asset" title="从此资源创建图生视频工作流" data-tip="从此资源创建图生视频工作流">创建工作流</button>
     </section>
   `;
 }
@@ -3228,117 +4073,117 @@ function exportMarkdown() {
   const lines = [];
   lines.push(`# ${state.title}`);
   lines.push("");
-  lines.push(`Updated: ${new Date(state.updatedAt).toLocaleString()}`);
+  lines.push(`更新时间：${new Date(state.updatedAt).toLocaleString()}`);
   lines.push("");
-  lines.push("## Continuity Bible");
+  lines.push("## 连续性圣经");
   const continuity = { ...defaultContinuity(), ...(state.continuity || {}) };
   const continuityRows = [
-    ["Characters", continuity.characters],
-    ["Wardrobe / Look", continuity.wardrobe],
-    ["Locations", continuity.locations],
-    ["Props / Objects", continuity.props],
-    ["Style Rules", continuity.styleRules],
-    ["Never Change", continuity.neverChange],
+    ["角色", continuity.characters],
+    ["服装 / 造型", continuity.wardrobe],
+    ["场景 / 地点", continuity.locations],
+    ["道具 / 物件", continuity.props],
+    ["风格规则", continuity.styleRules],
+    ["绝不能漂移", continuity.neverChange],
   ].filter(([, value]) => value);
   if (!continuityRows.length) {
     lines.push("");
-    lines.push("No continuity bible notes yet.");
+    lines.push("暂无连续性规则。");
   }
   continuityRows.forEach(([label, value]) => {
     lines.push(`- ${label}: ${value.replaceAll("\n", " ")}`);
   });
   lines.push("");
-  lines.push("## Handoff Readiness");
+  lines.push("## 交付就绪度");
   const handoffNodes = state.nodes
     .filter((node) => ["section", "scene", "shot", "workflow", "imageWorkflow", "placeholder", "styleRef", "musicRef"].includes(node.type))
     .sort((a, b) => a.y - b.y || a.x - b.x);
   if (!handoffNodes.length) {
     lines.push("");
-    lines.push("No handoff cards yet.");
+    lines.push("暂无可交付卡片。");
   }
   handoffNodes.forEach((node) => {
     const ready = readinessForNode(node);
     const missing = ready.items.filter((item) => !item.pass).map((item) => item.label);
-    lines.push(`- ${node.title} (${nodeTypeLabel(node.type)}): ${ready.done}/${ready.total} ready${missing.length ? `; needs ${missing.join(", ")}` : ""}`);
+    lines.push(`- ${node.title} (${nodeTypeLabel(node.type)}): ${ready.done}/${ready.total} 已就绪${missing.length ? `；待补 ${missing.join(", ")}` : ""}`);
   });
   lines.push("");
-  lines.push("## Sections");
+  lines.push("## 制作模块");
   const sections = state.nodes.filter((node) => node.type === "section").sort((a, b) => a.y - b.y || a.x - b.x);
   if (!sections.length) {
     lines.push("");
-    lines.push("No section frames yet.");
+    lines.push("暂无制作模块。");
   }
   sections.forEach((section) => {
     const children = nodesInsideSection(section).sort((a, b) => a.y - b.y || a.x - b.x);
     lines.push("");
     lines.push(`### ${section.title}`);
-    if (section.overallPrompt || section.notes) lines.push(`- Description: ${(section.overallPrompt || section.notes).replaceAll("\n", " ")}`);
-    if (section.stylePrompt) lines.push(`- Style: ${section.stylePrompt.replaceAll("\n", " ")}`);
-    if (section.musicPrompt) lines.push(`- Music / Sound: ${section.musicPrompt.replaceAll("\n", " ")}`);
-    lines.push(`- Contains: ${children.length ? children.map((node) => node.title).join(", ") : "No cards inside yet"}`);
+    if (section.overallPrompt || section.notes) lines.push(`- 说明: ${(section.overallPrompt || section.notes).replaceAll("\n", " ")}`);
+    if (section.stylePrompt) lines.push(`- 影像风格: ${section.stylePrompt.replaceAll("\n", " ")}`);
+    if (section.musicPrompt) lines.push(`- 音乐 / 声音: ${section.musicPrompt.replaceAll("\n", " ")}`);
+    lines.push(`- 包含卡片: ${children.length ? children.map((node) => node.title).join(", ") : "暂无卡片"}`);
   });
   lines.push("");
-  lines.push("## Placeholder Needs");
+  lines.push("## 待补项");
   const placeholders = state.nodes.filter((node) => node.type === "placeholder").sort((a, b) => a.y - b.y || a.x - b.x);
   if (!placeholders.length) {
     lines.push("");
-    lines.push("No missing asset placeholders yet.");
+    lines.push("暂无待补项。");
   }
   placeholders.forEach((node) => {
     const asset = assetById(node.referenceAssetId);
     lines.push("");
     lines.push(`- ${node.title}`);
-    lines.push(`  Needed For: ${node.neededFor || ""}`);
-    lines.push(`  Status: ${node.status || ""}`);
-    if (node.prompt || node.notes) lines.push(`  Brief: ${(node.prompt || node.notes).replaceAll("\n", " ")}`);
-    if (asset) lines.push(`  Resolved By: ${asset.name}`);
+    lines.push(`  用途: ${needLabel(node.neededFor)}`);
+    lines.push(`  状态: ${statusLabel(node.status)}`);
+    if (node.prompt || node.notes) lines.push(`  说明: ${(node.prompt || node.notes).replaceAll("\n", " ")}`);
+    if (asset) lines.push(`  已关联: ${asset.name}`);
   });
   lines.push("");
-  lines.push("## Scene Prompts");
+  lines.push("## 场景与镜头提示词");
   const promptNodes = state.nodes
     .filter((node) => (node.type === "section" || node.type === "scene" || node.type === "shot") && (node.overallPrompt || node.stylePrompt || node.musicPrompt || node.notes))
     .sort((a, b) => a.y - b.y || a.x - b.x);
   if (!promptNodes.length) {
     lines.push("");
-    lines.push("No scene prompt cards yet.");
+    lines.push("暂无场景提示词卡。");
   }
   promptNodes.forEach((node) => {
     lines.push("");
     lines.push(`### ${node.title}`);
-    if (node.overallPrompt) lines.push(`- Overall: ${node.overallPrompt.replaceAll("\n", " ")}`);
+    if (node.overallPrompt) lines.push(`- 整体意图: ${node.overallPrompt.replaceAll("\n", " ")}`);
     if (node.shotSize || node.cameraAngle || node.cameraMovement || node.subjectAction || node.location || node.mood || node.lighting || node.lensFeel || node.priority) {
-      lines.push(`- Shot Metadata: ${[
-        node.shotSize && `size ${node.shotSize}`,
-        node.cameraAngle && `angle ${node.cameraAngle}`,
-        node.cameraMovement && `movement ${node.cameraMovement}`,
-        node.subjectAction && `action ${node.subjectAction}`,
-        node.location && `location ${node.location}`,
-        node.mood && `mood ${node.mood}`,
-        node.lighting && `lighting ${node.lighting}`,
-        node.lensFeel && `lens ${node.lensFeel}`,
-        node.priority && `priority ${node.priority}`,
+      lines.push(`- 镜头元数据: ${[
+        node.shotSize && `景别 ${node.shotSize}`,
+        node.cameraAngle && `角度 ${node.cameraAngle}`,
+        node.cameraMovement && `运动 ${node.cameraMovement}`,
+        node.subjectAction && `动作 ${node.subjectAction}`,
+        node.location && `地点 ${node.location}`,
+        node.mood && `情绪 ${node.mood}`,
+        node.lighting && `光线 ${node.lighting}`,
+        node.lensFeel && `镜头感 ${node.lensFeel}`,
+        node.priority && `优先级 ${node.priority}`,
       ].filter(Boolean).join("; ")}`);
     }
-    if (node.stylePrompt) lines.push(`- Style: ${node.stylePrompt.replaceAll("\n", " ")}`);
-    if (node.musicPrompt) lines.push(`- Music / Sound: ${node.musicPrompt.replaceAll("\n", " ")}`);
-    if (node.notes) lines.push(`- Notes: ${node.notes.replaceAll("\n", " ")}`);
+    if (node.stylePrompt) lines.push(`- 影像风格: ${node.stylePrompt.replaceAll("\n", " ")}`);
+    if (node.musicPrompt) lines.push(`- 音乐 / 声音: ${node.musicPrompt.replaceAll("\n", " ")}`);
+    if (node.notes) lines.push(`- 备注: ${node.notes.replaceAll("\n", " ")}`);
   });
   lines.push("");
-  lines.push("## References");
+  lines.push("## 参考资料");
   const referenceAssets = state.assets
     .filter((asset) => asset.type === "video-link" || asset.type === "music-link" || asset.type === "reference-link" || asset.type === "audio")
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   if (!referenceAssets.length) {
     lines.push("");
-    lines.push("No style, music, or link references yet.");
+    lines.push("暂无风格、声音或链接参考。");
   }
   referenceAssets.forEach((asset) => {
     lines.push("");
     lines.push(`- ${asset.name}`);
-    lines.push(`  Type: ${asset.type}`);
+    lines.push(`  类型: ${asset.type}`);
     if (asset.externalUrl) lines.push(`  URL: ${asset.externalUrl}`);
-    if (asset.tags) lines.push(`  Tags: ${asset.tags}`);
-    if (asset.notes) lines.push(`  Notes: ${asset.notes.replaceAll("\n", " ")}`);
+    if (asset.tags) lines.push(`  标签: ${asset.tags}`);
+    if (asset.notes) lines.push(`  备注: ${asset.notes.replaceAll("\n", " ")}`);
   });
   state.nodes
     .filter((node) => (node.type === "styleRef" || node.type === "musicRef") && (node.referenceUrl || node.referenceAssetId || node.stylePrompt || node.musicPrompt))
@@ -3347,57 +4192,57 @@ function exportMarkdown() {
       const asset = assetById(node.referenceAssetId);
       lines.push("");
       lines.push(`- ${node.title}`);
-      lines.push(`  Type: ${node.type === "musicRef" ? "music reference card" : "style reference card"}`);
+      lines.push(`  类型: ${node.type === "musicRef" ? "声音参考卡" : "影像风格参考卡"}`);
       if (node.referenceUrl) lines.push(`  URL: ${node.referenceUrl}`);
-      if (asset) lines.push(`  Attached File: ${asset.name}`);
-      if (node.influenceUse) lines.push(`  Use For: ${node.influenceUse}`);
-      if (node.influenceStrength) lines.push(`  Influence Strength: ${node.influenceStrength}`);
-      if (node.influenceColor) lines.push(`  Color Notes: ${node.influenceColor}`);
-      if (node.influencePacing) lines.push(`  Pacing Notes: ${node.influencePacing}`);
-      if (node.influenceCamera) lines.push(`  Camera Notes: ${node.influenceCamera}`);
-      if (node.influenceLighting) lines.push(`  Lighting Notes: ${node.influenceLighting}`);
-      if (node.doNotCopy) lines.push(`  Do Not Copy: ${node.doNotCopy.replaceAll("\n", " ")}`);
-      if (node.stylePrompt) lines.push(`  Style Prompt: ${node.stylePrompt.replaceAll("\n", " ")}`);
-      if (node.musicPrompt) lines.push(`  Music Prompt: ${node.musicPrompt.replaceAll("\n", " ")}`);
+      if (asset) lines.push(`  关联素材: ${asset.name}`);
+      if (node.influenceUse) lines.push(`  用途: ${node.influenceUse}`);
+      if (node.influenceStrength) lines.push(`  影响强度: ${node.influenceStrength}`);
+      if (node.influenceColor) lines.push(`  色彩备注: ${node.influenceColor}`);
+      if (node.influencePacing) lines.push(`  节奏备注: ${node.influencePacing}`);
+      if (node.influenceCamera) lines.push(`  摄影备注: ${node.influenceCamera}`);
+      if (node.influenceLighting) lines.push(`  灯光备注: ${node.influenceLighting}`);
+      if (node.doNotCopy) lines.push(`  不要照搬: ${node.doNotCopy.replaceAll("\n", " ")}`);
+      if (node.stylePrompt) lines.push(`  风格提示词: ${node.stylePrompt.replaceAll("\n", " ")}`);
+      if (node.musicPrompt) lines.push(`  声音提示词: ${node.musicPrompt.replaceAll("\n", " ")}`);
     });
   lines.push("");
-  lines.push("## Asset Prompts");
+  lines.push("## 素材提示词");
   const mediaPromptNodes = state.nodes
     .filter((node) => node.type === "media" && (node.prompt || node.negativePrompt))
     .sort((a, b) => a.y - b.y || a.x - b.x);
   if (!mediaPromptNodes.length) {
     lines.push("");
-    lines.push("No per-image or reference prompts yet.");
+    lines.push("暂无单素材提示词。");
   }
   mediaPromptNodes.forEach((node) => {
     const asset = assetById(node.assetId);
     lines.push("");
     lines.push(`### ${node.title}`);
-    lines.push(`- Asset: ${asset?.name || ""}`);
+    lines.push(`- 素材: ${asset?.name || ""}`);
     if (asset?.externalUrl) lines.push(`- URL: ${asset.externalUrl}`);
     if (node.prompt) {
       lines.push("");
-      lines.push("Prompt:");
+      lines.push("提示词:");
       lines.push("```");
       lines.push(node.prompt);
       lines.push("```");
     }
     if (node.negativePrompt) {
       lines.push("");
-      lines.push("Negative Prompt:");
+      lines.push("反向提示词:");
       lines.push("```");
       lines.push(node.negativePrompt);
       lines.push("```");
     }
   });
   lines.push("");
-  lines.push("## Shot Package");
+  lines.push("## 镜头工作流包");
   const workflows = state.nodes
     .filter(isWorkflowNode)
     .sort((a, b) => a.y - b.y || a.x - b.x);
   if (!workflows.length) {
     lines.push("");
-    lines.push("No workflow cards yet.");
+    lines.push("暂无工作流卡。");
   }
   workflows.forEach((node, index) => {
     const start = assetById(node.startAssetId);
@@ -3405,60 +4250,60 @@ function exportMarkdown() {
     const source = nodeById(node.sourceNodeId);
     lines.push("");
     lines.push(`### ${index + 1}. ${node.title}`);
-    lines.push(`- Status: ${node.status || "draft"}`);
-    lines.push(`- Provider: ${node.provider || ""}`);
-    lines.push(`- Model: ${node.model || ""}`);
-    lines.push(`- Aspect / Resolution / Duration: ${node.aspectRatio || ""} / ${node.resolution || ""} / ${node.duration || ""}`);
+    lines.push(`- 状态: ${statusLabel(node.status || "draft")}`);
+    lines.push(`- 平台: ${node.provider || ""}`);
+    lines.push(`- 模型: ${node.model || ""}`);
+    lines.push(`- 画幅 / 分辨率 / 时长: ${node.aspectRatio || ""} / ${node.resolution || ""} / ${node.duration || ""}`);
     lines.push(`- Seed: ${node.seed || ""}`);
-    lines.push(`- Shot Size / Angle / Movement: ${node.shotSize || ""} / ${node.cameraAngle || ""} / ${node.cameraMovement || ""}`);
-    lines.push(`- Action / Location / Mood: ${node.subjectAction || ""} / ${node.location || ""} / ${node.mood || ""}`);
-    lines.push(`- Lighting / Lens / Priority: ${node.lighting || ""} / ${node.lensFeel || ""} / ${node.priority || ""}`);
-    lines.push(`- Source Node: ${source?.title || ""}`);
-    lines.push(`- Start Frame: ${start?.name || ""}`);
-    lines.push(`- End Frame: ${end?.name || ""}`);
-    lines.push(`- Tags: ${node.tags || ""}`);
+    lines.push(`- 景别 / 角度 / 运动: ${node.shotSize || ""} / ${node.cameraAngle || ""} / ${node.cameraMovement || ""}`);
+    lines.push(`- 动作 / 地点 / 情绪: ${node.subjectAction || ""} / ${node.location || ""} / ${node.mood || ""}`);
+    lines.push(`- 灯光 / 镜头 / 优先级: ${node.lighting || ""} / ${node.lensFeel || ""} / ${node.priority || ""}`);
+    lines.push(`- 来源卡片: ${source?.title || ""}`);
+    lines.push(`- 起始帧: ${start?.name || ""}`);
+    lines.push(`- 结束帧: ${end?.name || ""}`);
+    lines.push(`- 标签: ${node.tags || ""}`);
     lines.push("");
-    lines.push("Prompt:");
+    lines.push("提示词:");
     lines.push("```");
     lines.push(node.prompt || "");
     lines.push("```");
     if (node.negativePrompt) {
       lines.push("");
-      lines.push("Negative Prompt:");
+      lines.push("反向提示词:");
       lines.push("```");
       lines.push(node.negativePrompt);
       lines.push("```");
     }
     if (node.notes) {
       lines.push("");
-      lines.push(`Notes: ${node.notes}`);
+      lines.push(`备注: ${node.notes}`);
     }
     if ((node.attempts || []).length) {
       lines.push("");
-      lines.push("Attempts:");
+      lines.push("生成尝试:");
       node.attempts.forEach((attempt) => {
-        lines.push(`- ${attempt.label || "Attempt"} / ${attempt.status || "candidate"}${attempt.seed ? ` / ${attempt.seed}` : ""}${attempt.outputUrl ? ` / ${attempt.outputUrl}` : ""}${attempt.notes ? ` - ${attempt.notes.replaceAll("\n", " ")}` : ""}`);
+        lines.push(`- ${attempt.label || "尝试"} / ${statusLabel(attempt.status || "candidate")}${attempt.seed ? ` / ${attempt.seed}` : ""}${attempt.outputUrl ? ` / ${attempt.outputUrl}` : ""}${attempt.notes ? ` - ${attempt.notes.replaceAll("\n", " ")}` : ""}`);
       });
     }
     if (node.reviewDecision || node.reviewOwner || node.reviewNotes) {
       lines.push("");
-      lines.push(`Review: ${[node.reviewDecision, node.reviewOwner, node.reviewNotes?.replaceAll("\n", " ")].filter(Boolean).join(" / ")}`);
+      lines.push(`审阅: ${[node.reviewDecision, node.reviewOwner, node.reviewNotes?.replaceAll("\n", " ")].filter(Boolean).join(" / ")}`);
     }
   });
   lines.push("");
-  lines.push("## Review Notes");
+  lines.push("## 审阅备注");
   const reviewNodes = state.nodes
     .filter((node) => node.reviewDecision || node.reviewOwner || node.reviewNotes)
     .sort((a, b) => a.y - b.y || a.x - b.x);
   if (!reviewNodes.length) {
     lines.push("");
-    lines.push("No review notes yet.");
+    lines.push("暂无审阅备注。");
   }
   reviewNodes.forEach((node) => {
     lines.push(`- ${node.title}: ${[node.reviewDecision, node.reviewOwner, node.reviewNotes?.replaceAll("\n", " ")].filter(Boolean).join(" / ")}`);
   });
   lines.push("");
-  lines.push("## Board Notes");
+  lines.push("## 画布备注");
   state.nodes
     .filter((node) => !isWorkflowNode(node))
     .sort((a, b) => a.y - b.y || a.x - b.x)
@@ -3472,12 +4317,12 @@ function exportStoryboardHtml() {
   const ordered = storyboardExportNodes();
   const continuity = { ...defaultContinuity(), ...(state.continuity || {}) };
   const continuityItems = [
-    ["Characters", continuity.characters],
-    ["Wardrobe / Look", continuity.wardrobe],
-    ["Locations", continuity.locations],
-    ["Props / Objects", continuity.props],
-    ["Style Rules", continuity.styleRules],
-    ["Never Change", continuity.neverChange],
+    ["角色", continuity.characters],
+    ["服装 / 造型", continuity.wardrobe],
+    ["场景 / 地点", continuity.locations],
+    ["道具 / 物件", continuity.props],
+    ["风格规则", continuity.styleRules],
+    ["绝不能漂移", continuity.neverChange],
   ].filter(([, value]) => value);
   const cards = ordered
     .map((node, index) => {
@@ -3488,8 +4333,8 @@ function exportStoryboardHtml() {
           : asset.type === "audio"
             ? `<audio src="${asset.dataUrl}" controls></audio>`
             : `<img src="${asset.dataUrl}" alt="${esc(asset.name)}" />`
-        : `<div class="empty">No visual attached</div>`;
-      const attempts = (node.attempts || []).map((attempt) => `<li>${esc(attempt.label || "Attempt")} / ${esc(attempt.status || "candidate")}${attempt.outputUrl ? ` / <a href="${esc(attempt.outputUrl)}">${esc(attempt.outputUrl)}</a>` : ""}</li>`).join("");
+        : `<div class="empty">暂无可视素材</div>`;
+      const attempts = (node.attempts || []).map((attempt) => `<li>${esc(attempt.label || "尝试")} / ${esc(statusLabel(attempt.status || "candidate"))}${attempt.outputUrl ? ` / <a href="${esc(attempt.outputUrl)}">${esc(attempt.outputUrl)}</a>` : ""}</li>`).join("");
       return `
         <article class="card">
           <div class="media">${media}</div>
@@ -3498,27 +4343,27 @@ function exportStoryboardHtml() {
             <h2>${esc(node.title)}</h2>
             <p>${esc(node.overallPrompt || node.prompt || node.stylePrompt || node.musicPrompt || node.notes || "")}</p>
             <dl>
-              ${node.status ? `<dt>Status</dt><dd>${esc(node.status)}</dd>` : ""}
-              ${node.shotSize || node.cameraAngle || node.cameraMovement ? `<dt>Shot</dt><dd>${esc([node.shotSize, node.cameraAngle, node.cameraMovement].filter(Boolean).join(" / "))}</dd>` : ""}
-              ${node.subjectAction ? `<dt>Action</dt><dd>${esc(node.subjectAction)}</dd>` : ""}
-              ${node.location || node.mood ? `<dt>Location / Mood</dt><dd>${esc([node.location, node.mood].filter(Boolean).join(" / "))}</dd>` : ""}
-              ${node.lighting || node.lensFeel ? `<dt>Lighting / Lens</dt><dd>${esc([node.lighting, node.lensFeel].filter(Boolean).join(" / "))}</dd>` : ""}
-              ${node.reviewDecision || node.reviewNotes ? `<dt>Review</dt><dd>${esc([node.reviewDecision, node.reviewNotes].filter(Boolean).join(" / "))}</dd>` : ""}
+              ${node.status ? `<dt>状态</dt><dd>${esc(statusLabel(node.status))}</dd>` : ""}
+              ${node.shotSize || node.cameraAngle || node.cameraMovement ? `<dt>镜头</dt><dd>${esc([node.shotSize, node.cameraAngle, node.cameraMovement].filter(Boolean).join(" / "))}</dd>` : ""}
+              ${node.subjectAction ? `<dt>动作</dt><dd>${esc(node.subjectAction)}</dd>` : ""}
+              ${node.location || node.mood ? `<dt>地点 / 情绪</dt><dd>${esc([node.location, node.mood].filter(Boolean).join(" / "))}</dd>` : ""}
+              ${node.lighting || node.lensFeel ? `<dt>灯光 / 镜头感</dt><dd>${esc([node.lighting, node.lensFeel].filter(Boolean).join(" / "))}</dd>` : ""}
+              ${node.reviewDecision || node.reviewNotes ? `<dt>审阅</dt><dd>${esc([node.reviewDecision, node.reviewNotes].filter(Boolean).join(" / "))}</dd>` : ""}
             </dl>
-            ${attempts ? `<h3>Attempts</h3><ul>${attempts}</ul>` : ""}
+            ${attempts ? `<h3>生成尝试</h3><ul>${attempts}</ul>` : ""}
           </div>
         </article>
       `;
     })
     .join("");
   return `<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${esc(state.title)} Storyboard</title>
+  <title>${esc(state.title)} 分镜交付</title>
   <style>
-    body { margin: 0; font-family: Inter, Arial, sans-serif; color: #171717; background: #f6f3ec; }
+    body { margin: 0; font-family: Arial, "Microsoft YaHei", "PingFang SC", sans-serif; color: #171717; background: #f6f3ec; }
     header { padding: 28px; border-bottom: 2px solid #171717; background: #fffcf5; }
     h1 { margin: 0 0 6px; font-size: 28px; }
     .section { padding: 22px 28px; border-bottom: 1px solid #d4ccc0; }
@@ -3545,19 +4390,19 @@ function exportStoryboardHtml() {
 <body>
   <header>
     <h1>${esc(state.title)}</h1>
-    <div>Storyboard handoff exported ${new Date().toLocaleString()}</div>
+    <div>分镜交付导出时间：${new Date().toLocaleString()}</div>
   </header>
   <section class="section">
-    <h2>Continuity Bible</h2>
+    <h2>连续性圣经</h2>
     <div class="continuity">
       ${
         continuityItems.length
           ? continuityItems.map(([label, value]) => `<div><strong>${esc(label)}</strong><p>${esc(value)}</p></div>`).join("")
-          : "<p>No continuity bible notes yet.</p>"
+          : "<p>暂无连续性规则。</p>"
       }
     </div>
   </section>
-  <main class="grid">${cards || "<p>No storyboard cards yet.</p>"}</main>
+  <main class="grid">${cards || "<p>暂无分镜卡片。</p>"}</main>
 </body>
 </html>`;
 }
@@ -3572,15 +4417,15 @@ async function exportStoryboardPdf() {
   const button = els.downloadStoryboardPdfBtn;
   const originalLabel = button.textContent;
   button.disabled = true;
-  button.textContent = "Building PDF...";
+  button.textContent = "正在生成 PDF...";
   try {
     const pages = await renderStoryboardPdfPages();
     const pdfBlob = buildPdfFromJpegPages(pages);
     downloadBlob(pdfBlob, `${safeSlug(state.title || "master-canvas")}-storyboard.pdf`);
-    toast("Storyboard PDF exported");
+    toast("分镜 PDF 已导出");
   } catch (error) {
     console.error(error);
-    toast("Could not export storyboard PDF");
+    toast("无法导出分镜 PDF");
   } finally {
     button.disabled = false;
     button.textContent = originalLabel;
@@ -3591,12 +4436,12 @@ async function renderStoryboardPdfPages() {
   const ordered = storyboardExportNodes();
   const continuity = { ...defaultContinuity(), ...(state.continuity || {}) };
   const continuityItems = [
-    ["Characters", continuity.characters],
-    ["Wardrobe / Look", continuity.wardrobe],
-    ["Locations", continuity.locations],
-    ["Props / Objects", continuity.props],
-    ["Style Rules", continuity.styleRules],
-    ["Never Change", continuity.neverChange],
+    ["角色", continuity.characters],
+    ["服装 / 造型", continuity.wardrobe],
+    ["场景 / 地点", continuity.locations],
+    ["道具 / 物件", continuity.props],
+    ["风格规则", continuity.styleRules],
+    ["绝不能漂移", continuity.neverChange],
   ].filter(([, value]) => value);
   const pages = [];
   pages.push(await renderStoryboardPdfCover(continuityItems));
@@ -3613,16 +4458,16 @@ async function renderStoryboardPdfCover(continuityItems) {
   paintPdfPage(ctx);
   ctx.fillStyle = "#171717";
   ctx.font = "800 28px Arial";
-  drawWrappedText(ctx, state.title || "Storyboard", 34, 58, 544, 34, 2);
+  drawWrappedText(ctx, state.title || "分镜交付", 34, 58, 544, 34, 2);
   ctx.font = "13px Arial";
   ctx.fillStyle = "#4f4c45";
-  ctx.fillText(`Storyboard PDF exported ${new Date().toLocaleString()}`, 34, 112);
-  ctx.fillText(`${state.nodes.length} cards / ${state.assets.length} assets`, 34, 132);
+  ctx.fillText(`分镜 PDF 导出时间 ${new Date().toLocaleString()}`, 34, 112);
+  ctx.fillText(`${state.nodes.length} 张卡片 / ${state.assets.length} 项资源`, 34, 132);
   drawPdfRule(ctx, 34, 154, 544);
 
   ctx.font = "800 17px Arial";
   ctx.fillStyle = "#171717";
-  ctx.fillText("Continuity Bible", 34, 192);
+  ctx.fillText("连续性圣经", 34, 192);
   let y = 218;
   const boxW = 260;
   const boxGap = 16;
@@ -3640,12 +4485,12 @@ async function renderStoryboardPdfCover(continuityItems) {
 
   ctx.font = "800 14px Arial";
   ctx.fillStyle = "#171717";
-  ctx.fillText("How to read this PDF", 34, 690);
+  ctx.fillText("如何阅读这份 PDF", 34, 690);
   ctx.font = "11px Arial";
   ctx.fillStyle = "#4f4c45";
   drawWrappedText(
     ctx,
-    "Cards are ordered the same way as the canvas: top to bottom, left to right. Shot badges like S2-04 mean Scene 2, Shot 4. Full prompts and negative prompts remain in the Markdown, JSON, and handoff ZIP exports.",
+    "卡片顺序与画布一致：从上到下、从左到右。完整提示词、反向提示词、检查点和交付结构仍保留在 Markdown、JSON 与交付 ZIP 中。",
     34,
     714,
     544,
@@ -3660,10 +4505,10 @@ async function renderStoryboardPdfCardPage(nodes, firstIndex, total) {
   paintPdfPage(ctx);
   ctx.fillStyle = "#171717";
   ctx.font = "800 16px Arial";
-  ctx.fillText(state.title || "Storyboard", 34, 35);
+  ctx.fillText(state.title || "分镜交付", 34, 35);
   ctx.font = "10px Arial";
   ctx.fillStyle = "#6d6a62";
-  ctx.fillText(`Cards ${firstIndex}-${Math.min(firstIndex + nodes.length - 1, total)} of ${total}`, 430, 35);
+  ctx.fillText(`卡片 ${firstIndex}-${Math.min(firstIndex + nodes.length - 1, total)} / ${total}`, 430, 35);
   drawPdfRule(ctx, 34, 48, 544);
 
   const positions = [
@@ -3690,7 +4535,7 @@ async function drawStoryboardPdfCard(ctx, node, order, x, y, w, h) {
   } else {
     ctx.fillStyle = "#6d6a62";
     ctx.font = "800 12px Arial";
-    ctx.fillText(asset?.type === "video" ? "Video attached" : asset?.type === "audio" ? "Audio attached" : "No visual attached", x + 16, y + 74);
+    ctx.fillText(asset?.type === "video" ? "已关联视频" : asset?.type === "audio" ? "已关联音频" : "暂无可视素材", x + 16, y + 74);
   }
   ctx.strokeStyle = "#171717";
   ctx.lineWidth = 1;
@@ -3874,15 +4719,15 @@ async function exportHandoffZip() {
   const button = els.downloadHandoffZipBtn;
   const originalLabel = button.textContent;
   button.disabled = true;
-  button.textContent = "Building ZIP...";
+  button.textContent = "正在生成 ZIP...";
   try {
     const files = await buildHandoffPackageFiles();
     const zipBlob = buildZip(files);
     downloadBlob(zipBlob, `${safeSlug(state.title || "master-canvas")}-handoff-package.zip`);
-    toast("Handoff ZIP exported");
+    toast("交付 ZIP 已导出");
   } catch (error) {
     console.error(error);
-    toast("Could not export handoff ZIP");
+    toast("无法导出交付 ZIP");
   } finally {
     button.disabled = false;
     button.textContent = originalLabel;
@@ -4154,24 +4999,24 @@ function orderedSceneKeysForExport() {
 }
 
 function buildRootHandoffReadme(manifest) {
-  return `# ${manifest.title} - Handoff Package
+  return `# ${manifest.title} - 交付包
 
-Exported: ${manifest.exportedAt}
+导出时间：${manifest.exportedAt}
 
-This package contains everything needed to generate the project from the Master Canvas:
+这个包用于把 Master Canvas 项目交给导演、剪辑、生成执行或自动化代理。它包含本地画布中的结构化事实来源：
 
-- \`project_manifest.json\`: full structured source of truth
-- \`assets/\`: source images, video, and audio references used by the shot cards
-- \`timeline/shot_order.csv\`: scene and shot order for editorial/generation tracking
-- \`hermes-agent/\`: task brief and JSON job packet for Hermes Agent
-- \`comfyui/\`: LTX 2.3 ComfyUI shot manifest and per-shot jobs
-- \`kling-veo/\`: human-operator prompts and checklist for Kling or Veo
-- \`storyboard.html\`: visual storyboard handoff
-- \`shot-package.md\`: readable prompt package
+- \`project_manifest.json\`：完整结构化项目事实来源
+- \`assets/\`：镜头卡使用的图片、视频和音频参考
+- \`timeline/shot_order.csv\`：剪辑和生成执行用的场景/镜头顺序
+- \`hermes-agent/\`：给 Hermes Agent 的任务说明和 JSON job
+- \`comfyui/\`：LTX 2.3 ComfyUI 镜头清单和逐镜头 job
+- \`kling-veo/\`：Kling / Veo 人工执行提示词与检查清单
+- \`storyboard.html\`：可视化分镜交付
+- \`shot-package.md\`：可读的中文提示词包
 
-Primary target: ComfyUI with LTX 2.3 at 1080p or better.
+推荐目标：ComfyUI + LTX 2.3，最低 1080p。
 
-Important rule: preserve scene order and shot order. Outputs should be organized into bins by scene number, then returned with best takes, rejected takes, seeds/settings, and notes.`;
+重要规则：保持场景顺序与镜头顺序。输出应按场景编号入 bins，并随最佳版本、废弃版本、seed/设置和备注一起回传。`;
 }
 
 function buildHermesReadme(manifest) {
@@ -4595,7 +5440,20 @@ function toast(message) {
   setTimeout(() => node.remove(), 1800);
 }
 
+function exposeSmokeState() {
+  window.__MASTER_CANVAS_SMOKE__ = () => ({
+    title: state.title,
+    nodeCount: state.nodes.length,
+    assetCount: state.assets.length,
+    sectionCount: state.nodes.filter((node) => node.type === "section").length,
+    shotCount: state.nodes.filter((node) => node.type === "shot" || isWorkflowNode(node)).length,
+    view: { ...state.view },
+    hasLocalFirstCopy: document.body.innerText.includes("剧本不上云") || state.nodes.some((node) => String(node.notes || "").includes("剧本不上云")),
+    nodeTitles: state.nodes.map((node) => node.title),
+  });
+}
+
 boot().catch((error) => {
   console.error(error);
-  toast("Could not start local canvas");
+  toast("无法启动本地画布，请打开开发者工具查看错误");
 });

@@ -37,7 +37,7 @@ The development config skips macOS signing with:
 "identity": null
 ```
 
-That is fine for local QA and open-source test builds. For public distribution where users can double-click without Gatekeeper warnings, remove that setting and sign/notarize with your Apple Developer ID.
+That is fine for local QA and internal test builds. For public distribution where users can double-click without Gatekeeper warnings, remove that setting and sign/notarize with your Apple Developer ID.
 
 Unsigned macOS builds can still be opened, but first-run users may need to right-click the app and choose Open, or approve it in System Settings. A signed and notarized build is the polished "download, double-click, opens normally" experience.
 

@@ -3,17 +3,17 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/wassermanproductions/master-canvas?include_prereleases&label=download" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-BloomReel%20Proprietary-red.svg" alt="License: BloomReel Proprietary"></a>
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/bloomreel/master-canvas?include_prereleases&label=download" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platforms-macOS-2f7bf6" alt="Platforms">
-  <a href="https://ko-fi.com/samwasserman"><img src="https://img.shields.io/badge/Ko--fi-support%20Sam%20Wasserman-ff5e5b?logo=kofi&logoColor=white" alt="Support Sam Wasserman on Ko-fi"></a>
+  <a href="https://github.com/MookeeHugo"><img src="https://img.shields.io/badge/BloomReel-AI%20Filmmaker%20Studio-8b5cf6" alt="BloomReel AI Filmmaker Studio"></a>
 </p>
 
 # Master Canvas
 
 Local-first pre-production canvas for planning AI video projects. Arrange images, prompts, references, music notes, shot order, and generation handoffs on a visual board.
 
-Developed by Sam Wasserman: [WassermanProductions.com](https://wassermanproductions.com) and [Wasserman.AI](https://wasserman.ai). Released under the MIT License.
+Developed by BloomReel Team for the BloomReel AI Filmmaker Studio. This Rust/Tauri edition is proprietary BloomReel software.
 
 Master Canvas ships without bundled demo projects, private media, or sample user assets. New users start with a blank local canvas.
 
@@ -22,7 +22,7 @@ Master Canvas ships without bundled demo projects, private media, or sample user
 Apple Silicon (M1–M4):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wassermanproductions/master-canvas/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MookeeHugo/master-canvas/main/install.sh | bash
 ```
 
 This downloads the latest release, installs Master Canvas to Applications, and launches it. Intel Macs can build from source (see [Desktop App](#desktop-app)).
@@ -98,7 +98,7 @@ Recommended before publishing:
 
 ## Agent control (MCP)
 
-Any MCP agent — **Hermes, Claude Code, Codex, or any other MCP client** — can read and edit a Master Canvas project (boards, cards, prompts, references, shot order, assets) and build generator-ready handoff packages **headlessly**, without the desktop app. It operates on the app's exported `master-canvas-project.json` (export from the app → let the agent work → re-import). The server lives in [`mcp/`](mcp/) here and is also published standalone as [**master-canvas-mcp**](https://github.com/wassermanproductions/master-canvas-mcp).
+Any MCP agent — **Hermes, Claude Code, Codex, or any other MCP client** — can read and edit a Master Canvas project (boards, cards, prompts, references, shot order, assets) and build generator-ready handoff packages **headlessly**, without the desktop app. It operates on the app's exported `master-canvas-project.json` (export from the app → let the agent work → re-import). The server lives in [`mcp/`](mcp/) here and is also published standalone as [**master-canvas-mcp**](https://github.com/MookeeHugo/master-canvas-mcp).
 
 ```bash
 # Claude Code
@@ -117,11 +117,10 @@ plugins/mastercanvas-hermes
 
 It lets Hermes inspect/extract Master Canvas handoff ZIPs and turn them into a ComfyUI/LTX execution plan. Copy that folder into `~/.hermes/plugins/master-canvas` and restart Hermes.
 
-## Support
+## BloomReel
 
-A few people asked if they could send tips to support my work developing open source tools. So I set up an optional way in case anyone wants to.
+BloomReel distribution and support are managed by BloomReel Team.
 
-No pressure at all. Using the apps, sharing them, starring the repositories, and contributing code all help too. Thank you.
+BloomReel project links:
 
-- [GitHub Sponsors](https://github.com/sponsors/wassermanproductions)
-- [Ko-fi](https://ko-fi.com/samwasserman)
+- [BloomReel project entry](https://github.com/MookeeHugo)
