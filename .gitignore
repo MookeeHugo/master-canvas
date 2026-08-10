@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.playwright-cli/
+output/
 release/
 storage-backups/
 .DS_Store
