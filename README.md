@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-BloomReel%20Proprietary-red.svg" alt="License: BloomReel Proprietary"></a>
-  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/bloomreel/master-canvas?include_prereleases&label=download" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/platforms-macOS-2f7bf6" alt="Platforms">
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/MookeeHugo/master-canvas?include_prereleases&label=download" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows-2f7bf6" alt="Platforms">
   <a href="https://github.com/MookeeHugo"><img src="https://img.shields.io/badge/BloomReel-AI%20Filmmaker%20Studio-8b5cf6" alt="BloomReel AI Filmmaker Studio"></a>
 </p>
 
@@ -42,7 +42,7 @@ These screenshots show an example production board with assets, shot cards, prom
 - Per-shot prompts, negative prompts, lenses, lighting, camera movement, action, sound notes, and review notes.
 - Handoff exports for Markdown, JSON, visual storyboard HTML, storyboard PDF, and a ZIP package for agents/operators.
 - Handoff ZIP includes Hermes Agent context, ComfyUI/LTX job JSON, Kling/Veo prompt sheets, source assets, shot order CSV, and scene bin plan.
-- Local-first storage in the user's browser/Electron app. No account or cloud service is required.
+- Local-first storage in the user's browser/Tauri app. No account or cloud service is required.
 
 ## Privacy
 
@@ -59,26 +59,35 @@ Open the local URL printed by Vite.
 
 ## Desktop App
 
+Run the Tauri desktop shell locally:
+
 ```bash
 npm install
-npm run desktop
+npm run tauri:dev
 ```
 
-Package a desktop build:
+Build the web renderer only:
 
 ```bash
-npm run desktop:dir
+npm run build
 ```
 
-Create distributable installers:
+Build the Tauri desktop app without producing an installer bundle:
 
 ```bash
-npm run desktop:dist
+npm run tauri:build
 ```
 
-Installer output is written to `release/`.
+Create Windows installer bundles from the Tauri config:
 
-For unsigned local builds on macOS, use `npm run desktop:dir`. For public distribution, sign and notarize the macOS app with your own Apple Developer ID.
+```bash
+npm run tauri:installer
+npm run tauri:msi
+```
+
+Installer output is written under `src-tauri/target/release/bundle/`.
+
+For public distribution, sign/notarize platform installers with the appropriate Apple Developer ID or Windows code-signing certificate.
 
 More details:
 

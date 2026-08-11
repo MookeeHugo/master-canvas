@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::command;
-use tokio::process::Command;
-use tokio::io::{AsyncBufReadExt, BufReader};
+
+use crate::commands::project::validate_project_id;
 use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 /// MCP server status
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +41,7 @@ fn init_servers() {
 /// Start the MCP server for a project
 #[command]
 pub async fn start_mcp_server(project_id: String) -> Result<McpStatus, String> {
+    validate_project_id(&project_id)?;
     init_servers();
 
     // Check if already running
@@ -115,6 +118,7 @@ pub async fn start_mcp_server(project_id: String) -> Result<McpStatus, String> {
 /// Stop the MCP server for a project
 #[command]
 pub async fn stop_mcp_server(project_id: String) -> Result<(), String> {
+    validate_project_id(&project_id)?;
     init_servers();
 
     let child = {
@@ -143,6 +147,7 @@ pub fn get_mcp_status(project_id: Option<String>) -> Result<Vec<McpStatus>, Stri
     let servers = servers.as_ref().ok_or("Servers not initialized")?;
 
     if let Some(id) = project_id {
+        validate_project_id(&id)?;
         let running = servers.contains_key(&id);
         return Ok(vec![McpStatus {
             running,
@@ -151,9 +156,12 @@ pub fn get_mcp_status(project_id: Option<String>) -> Result<Vec<McpStatus>, Stri
         }]);
     }
 
-    Ok(servers.keys().map(|id| McpStatus {
-        running: true,
-        port: None,
-        project_id: Some(id.clone()),
-    }).collect())
+    Ok(servers
+        .keys()
+        .map(|id| McpStatus {
+            running: true,
+            port: None,
+            project_id: Some(id.clone()),
+        })
+        .collect())
 }

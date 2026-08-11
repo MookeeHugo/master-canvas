@@ -144,17 +144,8 @@ const TauriBridge = (() => {
     }
   }
 
-  async function openExternal(url) {
-    if (!(await ensureReady()) || !invoke) {
-      window.open(url, "_blank");
-      return;
-    }
-    try {
-      await invoke("plugin:shell|open", { path: url });
-    } catch (error) {
-      console.error("Failed to open external URL:", error);
-      window.open(url, "_blank");
-    }
+  function openExternal(url) {
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   return {

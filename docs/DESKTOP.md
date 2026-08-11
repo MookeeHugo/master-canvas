@@ -1,52 +1,49 @@
 # Desktop Packaging
 
-Master Canvas uses Electron for desktop packaging and Vite for the renderer build.
+Master Canvas uses Tauri for desktop packaging and Vite for the renderer build.
 
 ## Local Desktop Run
 
 ```bash
 npm install
-npm run desktop
+npm run tauri:dev
 ```
 
-This builds the web app and opens it in an Electron window.
+This starts Vite and opens the app in a Tauri desktop window.
 
-## Directory Package
+## Renderer Build
 
 ```bash
-npm run desktop:dir
+npm run build
 ```
 
-This creates an unpacked desktop app in `release/`. It is useful for QA before making installers.
+This creates the web renderer output in `dist/` for browser hosting or Tauri packaging.
+
+## Desktop Build
+
+```bash
+npm run tauri:build
+```
+
+This runs `vite build` and then `tauri build --no-bundle`, producing a local desktop binary without an installer bundle.
 
 ## Installers
 
 ```bash
-npm run desktop:dist
+npm run tauri:installer
+npm run tauri:msi
 ```
 
-Electron Builder targets are configured for macOS, Windows, and Linux.
+Installer artifacts are written under `src-tauri/target/release/bundle/`. The current Windows-oriented scripts cover NSIS and MSI smoke validation.
 
-Generated artifacts are written to `release/`. On macOS this creates a `.dmg` and a `.zip` app bundle.
+## Signing
 
-## macOS Signing
+Unsigned local/test builds work as desktop apps, but macOS/Windows may show first-launch security warnings. Public releases should be signed and notarized or code-signed with the relevant platform credentials.
 
-The development config skips macOS signing with:
+## File Associations
 
-```json
-"identity": null
-```
-
-That is fine for local QA and internal test builds. For public distribution where users can double-click without Gatekeeper warnings, remove that setting and sign/notarize with your Apple Developer ID.
-
-Unsigned macOS builds can still be opened, but first-run users may need to right-click the app and choose Open, or approve it in System Settings. A signed and notarized build is the polished "download, double-click, opens normally" experience.
-
-## Windows And Linux
-
-Windows builds can produce an `.exe` installer and `.zip`. For a clean no-warning Windows release, sign the installer with a code-signing certificate.
-
-Linux builds can produce an AppImage and tarball. AppImage users may need to mark the file executable before launching.
+The Tauri bundle registers `.mastercanvas` and `.mcproject` project files. On Windows, `scripts/installer-smoke.ps1` validates first launch, file association launch, writable app/project directories, and uninstall cleanup for generated installers.
 
 ## Data Storage
 
-The desktop app stores project data in Electron/Chromium local storage and IndexedDB on the user's machine. Nothing is uploaded to a server.
+The desktop app stores project data locally in the browser/Tauri runtime and in user-selected project files. Nothing is uploaded to a server.

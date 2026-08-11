@@ -1,22 +1,21 @@
 # Release Guide
 
-Master Canvas can be distributed as a normal desktop app through GitHub Releases.
+Master Canvas can be distributed as a Tauri desktop app through GitHub Releases.
 
 ## Quick Local Release Build
 
 ```bash
 npm install
-npm run desktop:dist
+npm run tauri:installer
 ```
 
-Artifacts are created in `release/`.
+For MSI validation/builds on Windows, use:
 
-On macOS, this produces:
+```bash
+npm run tauri:msi
+```
 
-- `Master Canvas-<version>-arm64.dmg`
-- `Master Canvas-<version>-arm64-mac.zip`
-
-Users can download the DMG, open it, drag the app into Applications, and launch it like a normal desktop app.
+Artifacts are created under `src-tauri/target/release/bundle/`.
 
 ## Important Signing Reality
 
@@ -29,12 +28,14 @@ For public macOS releases, use an Apple Developer ID and notarization. For publi
 
 ## GitHub Release Checklist
 
-1. Update the version in `package.json`.
-2. Run `npm run desktop:dist`.
-3. Test the generated app locally.
-4. Upload the installer artifacts from `release/` to a GitHub Release.
-5. Include notes that the app is local-first and stores data on the user's computer.
+1. Update the version in `package.json` and `src-tauri/Cargo.toml`.
+2. Run `npm run build` and `cargo check --manifest-path src-tauri/Cargo.toml`.
+3. Build the installer with `npm run tauri:installer` or `npm run tauri:msi`.
+4. Run the matching installer smoke script, for example `npm run smoke:installer:nsis` after generating an NSIS bundle.
+5. Test first launch, file associations, local project read/write, and uninstall cleanup.
+6. Upload installer artifacts from `src-tauri/target/release/bundle/` to a GitHub Release.
+7. Include notes that the app is local-first and stores data on the user's computer.
 
 ## Recommended Future Automation
 
-Add a GitHub Actions release workflow after signing credentials are ready. Unsigned CI builds are possible, but signed releases are better for non-technical users.
+Add GitHub Actions release workflows after signing credentials are ready. Unsigned CI builds are possible, but signed releases are better for non-technical users.

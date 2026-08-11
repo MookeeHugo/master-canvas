@@ -9,7 +9,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/MookeeHugo/master-canvas/main/install.sh | bash
 set -euo pipefail
 
-REPO="bloomreel/master-canvas"
+REPO="MookeeHugo/master-canvas"
 
 if [ "$(uname -m)" != "arm64" ]; then
   echo "Master Canvas for macOS currently ships for Apple Silicon (M1–M4) only." >&2

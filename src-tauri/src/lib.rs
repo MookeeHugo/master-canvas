@@ -3,10 +3,13 @@ pub mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let pending_open_file = commands::project::supported_project_arg(std::env::args().collect::<Vec<_>>());
+    let pending_open_file =
+        commands::project::supported_project_arg(std::env::args().collect::<Vec<_>>());
 
     tauri::Builder::default()
-        .manage(commands::project::PendingOpenFile(std::sync::Mutex::new(pending_open_file)))
+        .manage(commands::project::PendingOpenFile(std::sync::Mutex::new(
+            pending_open_file,
+        )))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             commands::project::queue_open_project_arg(app, args);
         }))

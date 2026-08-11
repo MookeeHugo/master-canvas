@@ -1,7 +1,7 @@
 //! Project management commands for Master Canvas
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, Manager};
 use uuid::Uuid;
@@ -9,14 +9,57 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct PendingOpenFile(pub Mutex<Option<String>>);
 
+const MAX_PROJECT_TEXT_BYTES: u64 = 100 * 1024 * 1024;
+
+pub fn validate_project_id(id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || id.len() > 80
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err("Invalid project id".to_string());
+    }
+
+    Ok(())
+}
+
+fn has_supported_project_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "mastercanvas" | "mcproject" | "json")
+    )
+}
+
+fn ensure_supported_project_path(path: &Path) -> Result<(), String> {
+    if has_supported_project_extension(path) {
+        Ok(())
+    } else {
+        Err("Unsupported project file extension".to_string())
+    }
+}
+
+async fn read_project_text_file(path: &Path) -> Result<String, String> {
+    ensure_supported_project_path(path)?;
+    if !path.exists() {
+        return Err("File does not exist".to_string());
+    }
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| format!("Could not read file metadata: {}", e))?;
+    if metadata.len() > MAX_PROJECT_TEXT_BYTES {
+        return Err("Project file is too large".to_string());
+    }
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| format!("Could not read file: {}", e))
+}
+
 pub fn supported_project_arg(args: impl IntoIterator<Item = String>) -> Option<String> {
-    args.into_iter().find(|arg| {
-        let path = PathBuf::from(arg);
-        matches!(
-            path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()),
-            Some(ext) if matches!(ext.as_str(), "mastercanvas" | "mcproject" | "json")
-        )
-    })
+    args.into_iter()
+        .find(|arg| has_supported_project_extension(&PathBuf::from(arg)))
 }
 
 pub fn queue_open_project_arg(app: &AppHandle, args: Vec<String>) {
@@ -40,7 +83,9 @@ pub fn queue_open_project_arg(app: &AppHandle, args: Vec<String>) {
 }
 
 #[command]
-pub fn take_pending_open_file(state: tauri::State<'_, PendingOpenFile>) -> Result<Option<String>, String> {
+pub fn take_pending_open_file(
+    state: tauri::State<'_, PendingOpenFile>,
+) -> Result<Option<String>, String> {
     let mut pending = state
         .0
         .lock()
@@ -51,9 +96,7 @@ pub fn take_pending_open_file(state: tauri::State<'_, PendingOpenFile>) -> Resul
 /// Get the app data directory
 #[command]
 pub fn get_app_data_dir(app: AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())
+    app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
 /// Card structure matching the frontend data model
@@ -141,7 +184,8 @@ pub async fn list_projects() -> Result<Vec<ProjectMeta>, String> {
         if path.extension().map(|e| e == "mcproject").unwrap_or(false) {
             match load_project_from_path(&path).await {
                 Ok(project) => {
-                    let card_count: i32 = project.canvases.iter().map(|c| c.cards.len() as i32).sum();
+                    let card_count: i32 =
+                        project.canvases.iter().map(|c| c.cards.len() as i32).sum();
                     projects.push(ProjectMeta {
                         id: project.id,
                         name: project.name,
@@ -162,13 +206,15 @@ pub async fn list_projects() -> Result<Vec<ProjectMeta>, String> {
     Ok(projects)
 }
 
+fn project_id_path(projects_dir: &Path, id: &str) -> Result<PathBuf, String> {
+    validate_project_id(id)?;
+    Ok(projects_dir.join(format!("{}.mcproject", id)))
+}
+
 /// Load a project from a file path
 async fn load_project_from_path(path: &PathBuf) -> Result<Project, String> {
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse project: {}", e))
+    let content = read_project_text_file(path).await?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse project: {}", e))
 }
 
 /// Load a project by ID
@@ -178,7 +224,7 @@ pub async fn load_project(id: String) -> Result<Project, String> {
         .map(|d| d.join("MasterCanvas"))
         .ok_or_else(|| "Cannot find documents directory".to_string())?;
 
-    let path = projects_dir.join(format!("{}.mcproject", id));
+    let path = project_id_path(&projects_dir, &id)?;
     load_project_from_path(&path).await
 }
 
@@ -194,9 +240,12 @@ pub async fn save_project(project: Project) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to create projects directory: {}", e))?;
 
-    let path = projects_dir.join(format!("{}.mcproject", project.id));
+    let path = project_id_path(&projects_dir, &project.id)?;
     let content = serde_json::to_string_pretty(&project)
         .map_err(|e| format!("Failed to serialize project: {}", e))?;
+    if content.len() as u64 > MAX_PROJECT_TEXT_BYTES {
+        return Err("Project file is too large".to_string());
+    }
 
     tokio::fs::write(&path, content)
         .await
@@ -240,7 +289,7 @@ pub async fn delete_project(id: String) -> Result<(), String> {
         .map(|d| d.join("MasterCanvas"))
         .ok_or_else(|| "Cannot find documents directory".to_string())?;
 
-    let path = projects_dir.join(format!("{}.mcproject", id));
+    let path = project_id_path(&projects_dir, &id)?;
 
     if !path.exists() {
         return Err("Project not found".to_string());
@@ -256,14 +305,15 @@ pub async fn delete_project(id: String) -> Result<(), String> {
 
 /// Export a project to JSON
 #[command]
-pub async fn export_project(
-    project_id: String,
-    output_path: PathBuf,
-) -> Result<String, String> {
+pub async fn export_project(project_id: String, output_path: PathBuf) -> Result<String, String> {
+    ensure_supported_project_path(&output_path)?;
     let project = load_project(project_id).await?;
 
     let content = serde_json::to_string_pretty(&project)
         .map_err(|e| format!("Failed to serialize: {}", e))?;
+    if content.len() as u64 > MAX_PROJECT_TEXT_BYTES {
+        return Err("Project file is too large".to_string());
+    }
 
     tokio::fs::write(&output_path, content)
         .await
@@ -275,12 +325,10 @@ pub async fn export_project(
 /// Import a project from a JSON file
 #[command]
 pub async fn import_project(input_path: PathBuf) -> Result<Project, String> {
-    let content = tokio::fs::read_to_string(&input_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let content = read_project_text_file(&input_path).await?;
 
-    let mut project: Project = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse project: {}", e))?;
+    let mut project: Project =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse project: {}", e))?;
 
     // Generate new ID to avoid conflicts
     project.id = Uuid::new_v4().to_string();
@@ -294,18 +342,17 @@ pub async fn import_project(input_path: PathBuf) -> Result<Project, String> {
 #[command]
 pub async fn read_text_file(file_path: String) -> Result<String, String> {
     let path = PathBuf::from(&file_path);
-    if !path.exists() {
-        return Err("文件不存在".to_string());
-    }
-    tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|e| format!("无法读取文件: {}", e))
+    read_project_text_file(&path).await
 }
 
 /// Write a UTF-8 project file to a user-selected path.
 #[command]
 pub async fn write_text_file(file_path: String, content: String) -> Result<String, String> {
     let path = PathBuf::from(&file_path);
+    ensure_supported_project_path(&path)?;
+    if content.len() as u64 > MAX_PROJECT_TEXT_BYTES {
+        return Err("Project file is too large".to_string());
+    }
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             tokio::fs::create_dir_all(parent)
@@ -317,4 +364,29 @@ pub async fn write_text_file(file_path: String, content: String) -> Result<Strin
         .await
         .map_err(|e| format!("无法写入文件: {}", e))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_safe_project_ids() {
+        assert!(validate_project_id("project_abcd-1234").is_ok());
+        assert!(validate_project_id("").is_err());
+        assert!(validate_project_id("../secret").is_err());
+        assert!(validate_project_id("project.name").is_err());
+    }
+
+    #[test]
+    fn recognizes_supported_project_extensions() {
+        assert!(has_supported_project_extension(Path::new(
+            "story.mastercanvas"
+        )));
+        assert!(has_supported_project_extension(Path::new(
+            "story.mcproject"
+        )));
+        assert!(has_supported_project_extension(Path::new("story.JSON")));
+        assert!(!has_supported_project_extension(Path::new("story.txt")));
+    }
 }
