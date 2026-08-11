@@ -1,63 +1,33 @@
 {
   "name": "master-canvas",
-  "version": "1.0.0",
-  "description": "Local-first pre-production canvas for AI video planning, prompts, assets, and handoff packages.",
-  "main": "electron/main.cjs",
-  "author": "Sam Wasserman",
-  "homepage": "https://wasserman.ai",
-  "private": false,
-  "license": "MIT",
+  "version": "2.0.0",
+  "description": "Master Canvas — local-first pre-production canvas for AI video planning",
+  "author": "BloomReel Team",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
   "scripts": {
-    "start": "vite --host 127.0.0.1",
-    "dev": "vite --host 127.0.0.1",
+    "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1",
-    "desktop": "npm run build && electron electron/main.cjs",
-    "desktop:dir": "npm run build && electron-builder --dir",
-    "desktop:dist": "npm run build && electron-builder"
-  },
-  "build": {
-    "appId": "studio.mastercanvas.app",
-    "productName": "Master Canvas",
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "package.json"
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "mac": {
-      "category": "public.app-category.productivity",
-      "identity": null,
-      "icon": "build/icon.icns",
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    },
-    "win": {
-      "icon": "build/icon.png",
-      "target": [
-        "nsis",
-        "zip"
-      ]
-    },
-    "linux": {
-      "icon": "build/icon.png",
-      "target": [
-        "AppImage",
-        "tar.gz"
-      ],
-      "category": "AudioVideo"
-    }
+    "smoke": "node scripts/smoke.js",
+    "smoke:installer:nsis": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer-smoke.ps1 -Package nsis",
+    "smoke:installer:msi": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer-smoke.ps1 -Package msi",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "vite build && tauri build --no-bundle",
+    "tauri:installer": "vite build && tauri build --bundles nsis",
+    "tauri:msi": "vite build && tauri build --bundles msi"
   },
   "dependencies": {
-    "@vitejs/plugin-basic-ssl": "^2.1.0",
-    "vite": "^6.2.0"
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-fs": "^2.2.0",
+    "@tauri-apps/plugin-process": "^2.2.0",
+    "@tauri-apps/plugin-shell": "^2.2.0"
   },
   "devDependencies": {
-    "electron": "^42.2.0",
-    "electron-builder": "^26.8.1"
+    "@tauri-apps/cli": "^2.2.0",
+    "vite": "^6.2.0"
   }
 }

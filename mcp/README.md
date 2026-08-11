@@ -1,6 +1,6 @@
 # master-canvas-mcp
 
-Headless MCP (Model Context Protocol) server for **[Master Canvas](https://github.com/wassermanproductions/master-canvas)** — the local-first pre-production canvas for AI video planning, prompts, assets, and handoff packages. With this server connected, an AI agent can read and edit a Master Canvas project and build generator-ready handoff packages **without opening the desktop app** — it works directly on the project's JSON data on disk.
+Headless MCP (Model Context Protocol) server for **[Master Canvas](https://github.com/MookeeHugo/master-canvas)** — the local-first pre-production canvas for AI video planning, prompts, assets, and handoff packages. With this server connected, an AI agent can read and edit a Master Canvas project and build generator-ready handoff packages **without opening the desktop app** — it works directly on the project's JSON data on disk.
 
 An agent can create a board, add scene/shot/reference cards, write prompts and negative prompts, set camera and lighting notes, attach source images and reference links, order shots, and export a complete handoff package for ComfyUI/LTX, Kling, Veo, or a downstream agent.
 
@@ -102,4 +102,4 @@ This server only touches the local filesystem: it reads and writes the Master Ca
 
 ## License & credit
 
-MIT — see [LICENSE](LICENSE). Per the [NOTICE](NOTICE) file, please credit **Sam Wasserman ([wassermanproductions.com](https://wassermanproductions.com))** in uses, forks, and redistributions.
+BloomReel Proprietary — see [LICENSE](LICENSE). This MCP server is part of the closed BloomReel toolchain; third-party components retain their own notices.
