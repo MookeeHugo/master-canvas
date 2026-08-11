@@ -212,7 +212,7 @@ fn project_id_path(projects_dir: &Path, id: &str) -> Result<PathBuf, String> {
 }
 
 /// Load a project from a file path
-async fn load_project_from_path(path: &PathBuf) -> Result<Project, String> {
+async fn load_project_from_path(path: &Path) -> Result<Project, String> {
     let content = read_project_text_file(path).await?;
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse project: {}", e))
 }

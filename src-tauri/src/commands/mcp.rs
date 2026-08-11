@@ -80,7 +80,7 @@ pub async fn start_mcp_server(project_id: String) -> Result<McpStatus, String> {
     // Start the MCP server as a child process
     let mut child = Command::new("node")
         .arg(mcp_script.to_string_lossy().to_string())
-        .arg("--project-id".to_string())
+        .arg("--project-id")
         .arg(project_id.clone())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
